@@ -1,0 +1,58 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test, type-checker, linter, and coverage caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Judge runtime files
+temp/*
+!temp/.gitkeep
+
+# Runtime databases and backups
+data/*.db
+data/*.db-*
+data/backups/*
+!data/backups/.gitkeep
+
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+local_config.py
+
+# Frontend dependencies and generated output
+node_modules/
+frontend/dist/
+frontend/build/
+
+# Python packaging output
+build/
+dist/
+*.egg-info/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Docs
+doc/*
+!doc/.gitkeep
