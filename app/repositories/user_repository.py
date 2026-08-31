@@ -1,6 +1,21 @@
 from typing import Any
 
+import aiosqlite
+
 from app.repositories.database import get_db_connection
+
+
+def _row_to_user(row: aiosqlite.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "password_hash": row["password_hash"],
+        "role": row["role"],
+        "is_active": bool(row["is_active"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
 
 
 async def get_user_by_username(username: str) -> dict[str, Any] | None:
@@ -14,7 +29,21 @@ async def get_user_by_username(username: str) -> dict[str, Any] | None:
             (username,),
         )
         row = await cursor.fetchone()
-        return dict(row) if row else None
+    return _row_to_user(row) if row else None
+
+
+async def get_user_by_id(user_id: str) -> dict[str, Any] | None:
+    async with get_db_connection() as db:
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM users
+            WHERE id = ?
+            """,
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+    return _row_to_user(row) if row else None
 
 
 async def create_user(
@@ -26,7 +55,7 @@ async def create_user(
     is_active: bool,
     created_at: str,
     updated_at: str,
-) -> None:
+) -> dict[str, Any] | None:
     async with get_db_connection() as db:
         await db.execute(
             """
@@ -52,3 +81,5 @@ async def create_user(
             ),
         )
         await db.commit()
+    user = await get_user_by_id(user_id)
+    return user
