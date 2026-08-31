@@ -173,6 +173,34 @@ def create_problem_as_teacher(
     return problem_id, teacher_name, teacher_id
 
 
+def test_problem_create_duplicate_and_field_validation() -> None:
+    with TestClient(app) as client:
+        problem_id, _, _ = create_problem_as_teacher(client)
+
+        duplicate_response = client.post(
+            "/api/problems",
+            json=make_problem(problem_id),
+        )
+        assert duplicate_response.status_code == status.HTTP_409_CONFLICT
+
+        missing_title = make_problem(unique_problem_id())
+        missing_title.pop("title")
+        invalid_id = make_problem("invalid id")
+        no_samples = make_problem(unique_problem_id())
+        no_samples["samples"] = []
+        invalid_score = make_problem(unique_problem_id())
+        invalid_score["test_cases"][0]["score"] = 40
+
+        for payload in (
+            missing_title,
+            invalid_id,
+            no_samples,
+            invalid_score,
+        ):
+            response = client.post("/api/problems", json=payload)
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
 def test_student_list_and_detail_hide_test_cases() -> None:
     with TestClient(app) as client:
         problem_id, _, _ = create_problem_as_teacher(client)
