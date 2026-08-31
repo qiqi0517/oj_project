@@ -16,8 +16,6 @@ def _row_to_user(row: aiosqlite.Row) -> dict[str, Any]:
         "updated_at": row["updated_at"],
     }
 
-
-
 async def get_user_by_username(username: str) -> dict[str, Any] | None:
     async with get_db_connection() as db:
         cursor = await db.execute(
@@ -55,7 +53,7 @@ async def create_user(
     is_active: bool,
     created_at: str,
     updated_at: str,
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     async with get_db_connection() as db:
         await db.execute(
             """
@@ -82,4 +80,6 @@ async def create_user(
         )
         await db.commit()
     user = await get_user_by_id(user_id)
+    if user is None:
+        raise RuntimeError("failed to load created user")
     return user

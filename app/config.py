@@ -24,7 +24,7 @@ INITIAL_ADMIN_PASSWORD = os.getenv(
 )
 
 
-def ensure_directories():
+def ensure_directories() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)

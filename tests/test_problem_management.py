@@ -13,6 +13,7 @@ from app.config import (
 )
 from app.main import app
 from app.models.enums import UserRole
+from app.repositories import problem_repository
 from app.utils.time import to_iso8601, utc_now
 
 
@@ -186,19 +187,63 @@ def test_problem_create_duplicate_and_field_validation() -> None:
         missing_title = make_problem(unique_problem_id())
         missing_title.pop("title")
         invalid_id = make_problem("invalid id")
+        blank_description = make_problem(unique_problem_id())
+        blank_description["description"] = "   "
         no_samples = make_problem(unique_problem_id())
         no_samples["samples"] = []
+        zero_time_limit = make_problem(unique_problem_id())
+        zero_time_limit["time_limit"] = 0
+        zero_memory_limit = make_problem(unique_problem_id())
+        zero_memory_limit["memory_limit"] = 0
+        invalid_difficulty = make_problem(unique_problem_id())
+        invalid_difficulty["difficulty"] = "impossible"
+        no_test_cases = make_problem(unique_problem_id())
+        no_test_cases["test_cases"] = []
+        negative_score = make_problem(unique_problem_id())
+        negative_score["test_cases"][0]["score"] = -1
         invalid_score = make_problem(unique_problem_id())
         invalid_score["test_cases"][0]["score"] = 40
+        duplicate_case_id = make_problem(unique_problem_id())
+        duplicate_case_id["test_cases"][1]["case_id"] = "case_01"
 
         for payload in (
             missing_title,
             invalid_id,
+            blank_description,
             no_samples,
+            zero_time_limit,
+            zero_memory_limit,
+            invalid_difficulty,
+            no_test_cases,
+            negative_score,
             invalid_score,
+            duplicate_case_id,
         ):
             response = client.post("/api/problems", json=payload)
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+def test_unknown_database_error_returns_sanitized_500(monkeypatch) -> None:
+    async def fail_create_problem(*args, **kwargs):
+        raise RuntimeError("private database failure")
+
+    monkeypatch.setattr(
+        problem_repository,
+        "create_problem",
+        fail_create_problem,
+    )
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        teacher_name, _ = register_user(client, UserRole.TEACHER)
+        login(client, teacher_name)
+        response = client.post(
+            "/api/problems",
+            json=make_problem(unique_problem_id()),
+        )
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert response.json()["code"] == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "private database failure" not in response.text
 
 
 def test_student_list_and_detail_hide_test_cases() -> None:

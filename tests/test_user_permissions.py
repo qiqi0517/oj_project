@@ -234,6 +234,23 @@ def test_login_invalid_username_and_password_have_same_message() -> None:
     assert (unknown_user_response.json()["message"] == wrong_password_response.json()["message"])
 
 
+def test_inactive_user_cannot_login() -> None:
+    username = unique_username("inactive")
+    with TestClient(app) as client:
+        register_user(client, username)
+        disable_user(username)
+        response = client.post(
+            "/api/auth/login",
+            json={
+                "username": username,
+                "password": TEST_PASSWORD,
+            },
+        )
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert response.json()["code"] == status.HTTP_403_FORBIDDEN
+
+
 def test_me_without_login() -> None:
     with TestClient(app) as client:
         response = client.get("/api/auth/me")

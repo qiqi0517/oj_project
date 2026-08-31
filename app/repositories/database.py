@@ -147,7 +147,7 @@ async def get_db_connection() -> AsyncGenerator[aiosqlite.Connection]:
 
 
 # init database
-async def init_database():
+async def init_database() -> None:
     async with get_db_connection() as db:
         # create tables
         for create_table in CREATE_TABLES:
