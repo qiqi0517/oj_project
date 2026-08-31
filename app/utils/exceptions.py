@@ -2,6 +2,7 @@ import logging
 
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,20 @@ async def app_error_handler(
         content={
             "code": exc.status_code,
             "message": exc.message,
+            "data": None,
+        },
+    )
+
+
+async def validation_error_handler(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        content={
+            "code": status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "message": "validation error",
             "data": None,
         },
     )

@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import SESSION_SECRET, ensure_directories
@@ -10,6 +11,7 @@ from app.services.user_service import ensure_initial_admin
 from app.utils.exceptions import (
     AppError,
     app_error_handler,
+    validation_error_handler,
     unexpected_error_handler,
 )
 from app.routers import (
@@ -22,7 +24,7 @@ from app.routers import (
     users,
 )
 
-
+# lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     ensure_directories()
@@ -30,15 +32,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     await ensure_initial_admin()
     yield
 
-
+# app
 app = FastAPI(
     title="OJ System API",
     lifespan=lifespan,
 )
 
+# exception handler
 app.add_exception_handler(
     AppError,
     app_error_handler,  # type: ignore
+)
+
+app.add_exception_handler(
+    RequestValidationError,
+    validation_error_handler,   # type: ignore
 )
 
 app.add_exception_handler(
@@ -46,11 +54,13 @@ app.add_exception_handler(
     unexpected_error_handler,
 )
 
+# middleware
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
 )
 
+# router
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(users.router)
