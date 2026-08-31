@@ -5,3 +5,4 @@ bcrypt
 pytest
 pytest-asyncio
 httpx
+itsdangerous
