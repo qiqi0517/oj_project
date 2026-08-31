@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 import aiosqlite
+from fastapi import status
 
 from app.models.enums import UserRole
 from app.models.user import UserPublic
@@ -21,7 +22,7 @@ async def register_user(
 ) -> UserPublic:
     existing_user = await get_user_by_username(username)
     if existing_user is not None:
-        raise AppError(409, "username already exists")
+        raise AppError(status.HTTP_409_CONFLICT, "username already exists")
 
     user_id = str(uuid4())
     password_hash = hash_password(password)
@@ -37,7 +38,7 @@ async def register_user(
             updated_at=now,
         )
     except aiosqlite.IntegrityError:
-        raise AppError(409, "username already exists")
+        raise AppError(status.HTTP_409_CONFLICT, "username already exists")
     return UserPublic.model_validate(user)
 
 
@@ -47,9 +48,9 @@ async def authenticate_user(
 ) -> UserPublic:
     user = await get_user_by_username(username)
     if user is None:
-        raise AppError(401, INVALID_CREDENTIALS_MESSAGE)
+        raise AppError(status.HTTP_401_UNAUTHORIZED, INVALID_CREDENTIALS_MESSAGE)
     if not verify_password(password, user["password_hash"]):
-        raise AppError(401, INVALID_CREDENTIALS_MESSAGE)
+        raise AppError(status.HTTP_401_UNAUTHORIZED, INVALID_CREDENTIALS_MESSAGE)
     if not user["is_active"]:
-        raise AppError(403, "user is disabled")
+        raise AppError(status.HTTP_403_FORBIDDEN, "user is disabled")
     return UserPublic.model_validate(user)

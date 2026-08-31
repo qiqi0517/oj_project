@@ -1,4 +1,5 @@
 from typing import Any
+from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
@@ -6,7 +7,7 @@ from fastapi.responses import JSONResponse
 def success_response(
     data: Any = None,
     message: str = "ok",
-    status_code: int = 200,
+    status_code: int = status.HTTP_200_OK,
 ) -> JSONResponse:
     content = {
         "code": status_code,

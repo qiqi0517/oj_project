@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import Request
+from fastapi import Request, status
 from fastapi.responses import JSONResponse
 
 
@@ -40,9 +40,9 @@ async def unexpected_error_handler(
         exc_info=(type(exc), exc, exc.__traceback__),
     )
     return JSONResponse(
-        status_code=500,
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
-            "code": 500,
+            "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
             "message": "internal server error",
             "data": None,
         },
