@@ -1,17 +1,15 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from app.models.user import (
     UserLoginRequest,
+    UserLoginResponse,
     UserPublic,
-    UserRegisterRequest,
 )
-from app.services.auth_service import (
-    authenticate_user,
-    register_user,
-)
+from app.models.response import ApiResponse
+from app.services.user_service import to_user_public, authenticate_user
 from app.utils.auth import get_current_user
 from app.utils.response import success_response
 
@@ -22,25 +20,7 @@ router = APIRouter(
 )
 
 
-@router.post(
-    "/register",
-    status_code=status.HTTP_201_CREATED,
-)
-async def register(
-    request_data: UserRegisterRequest,
-) -> JSONResponse:
-    user = await register_user(
-        username=request_data.username,
-        password=request_data.password,
-    )
-    return success_response(
-        data=user,
-        message="user registered",
-        status_code=status.HTTP_201_CREATED,
-    )
-
-
-@router.post("/login")
+@router.post("/login", response_model=ApiResponse[UserLoginResponse])
 async def login(
     request_data: UserLoginRequest,
     request: Request,
@@ -49,29 +29,20 @@ async def login(
         username=request_data.username,
         password=request_data.password,
     )
-    request.session["user_id"] = user.id
+    request.session["user_id"] = user.user_id
     return success_response(
         data=user,
-        message="login successful",
+        msg="login success",
     )
 
 
-@router.get("/me")
-async def get_me(
-    current_user: dict[str, Any] = Depends(get_current_user),
-) -> JSONResponse:
-    public_user = UserPublic.model_validate(current_user)
-    return success_response(
-        data=public_user,
-    )
-
-
-@router.post("/logout")
+@router.post("/logout", response_model=ApiResponse[None])
 async def logout(
     request: Request,
+    _current_user: dict[str, Any] = Depends(get_current_user),
 ) -> JSONResponse:
     request.session.clear()
     return success_response(
         data=None,
-        message="logout successful",
+        msg="logout success",
     )

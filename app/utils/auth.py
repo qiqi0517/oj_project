@@ -16,21 +16,10 @@ async def get_current_user(request: Request) -> dict[str, Any]:
     if user is None:
         request.session.clear()
         raise AppError(status.HTTP_401_UNAUTHORIZED, "not authenticated")
-    if not user["is_active"]:
-        raise AppError(status.HTTP_403_FORBIDDEN, "user is disabled")
+    if user["role"] == UserRole.BANNED.value:
+        raise AppError(status.HTTP_403_FORBIDDEN, "user is banned")
 
     return user
-
-
-async def require_teacher_or_admin(
-    current_user: dict[str, Any] = Depends(get_current_user),
-) -> dict[str, Any]:
-    if current_user["role"] not in {
-        UserRole.TEACHER.value,
-        UserRole.ADMIN.value,
-    }:
-        raise AppError(status.HTTP_403_FORBIDDEN, "permission denied")
-    return current_user
 
 
 async def require_admin(
