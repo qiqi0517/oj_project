@@ -38,6 +38,7 @@ data/backups/*
 .env.*
 !.env.example
 local_config.py
+.streamlit/secrets.toml
 
 # Frontend dependencies and generated output
 node_modules/
@@ -56,3 +57,5 @@ Thumbs.db
 # Docs
 doc/*
 !doc/.gitkeep
+!doc/requirements.md
+!doc/api.md
