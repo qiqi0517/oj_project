@@ -21,3 +21,11 @@ class LanguageCreate(BaseModel):
 
 class LanguagePublic(LanguageCreate):
     pass
+
+
+class LanguageCreateResponse(BaseModel):
+    name: str
+
+
+class LanguageListResponse(BaseModel):
+    name: list[str]

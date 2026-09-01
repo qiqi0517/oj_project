@@ -1,7 +1,12 @@
 import aiosqlite
 from fastapi import status
 
-from app.models.language import LanguageCreate, LanguagePublic
+from app.models.language import (
+    LanguageCreate,
+    LanguageCreateResponse,
+    LanguageListResponse,
+    LanguagePublic,
+)
 from app.repositories import language_repository
 from app.utils.exceptions import AppError
 
@@ -30,7 +35,7 @@ async def ensure_default_languages() -> None:
         await language_repository.ensure_language(language)
 
 
-async def register_language(language: LanguageCreate) -> LanguagePublic:
+async def register_language(language: LanguageCreate) -> LanguageCreateResponse:
     if await language_repository.get_language(language.name) is not None:
         raise AppError(status.HTTP_400_BAD_REQUEST, "language already exists")
     try:
@@ -40,7 +45,7 @@ async def register_language(language: LanguageCreate) -> LanguagePublic:
             status.HTTP_400_BAD_REQUEST,
             "language already exists",
         ) from exc
-    return LanguagePublic.model_validate(created)
+    return LanguageCreateResponse.model_validate(created)
 
 
 async def get_language(name: str) -> LanguagePublic:
@@ -50,6 +55,8 @@ async def get_language(name: str) -> LanguagePublic:
     return LanguagePublic.model_validate(language)
 
 
-async def get_language_names() -> list[str]:
+async def get_language_names() -> LanguageListResponse:
     languages = await language_repository.list_languages()
-    return [language["name"] for language in languages]
+    return LanguageListResponse.model_validate(
+        {"name": [language["name"] for language in languages]}
+    )
