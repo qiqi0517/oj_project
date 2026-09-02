@@ -20,8 +20,10 @@ INITIAL_ADMIN_USERNAME = os.getenv(
 
 INITIAL_ADMIN_PASSWORD = os.getenv(
     "OJ_INITIAL_ADMIN_PASSWORD",
-    "admin-demo-password",
+    "admintestpassword",
 )
+
+TESTING = os.getenv("OJ_TESTING", "").lower() in {"1", "true", "yes"}
 
 
 def ensure_directories() -> None:
