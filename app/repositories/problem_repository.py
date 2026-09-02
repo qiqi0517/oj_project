@@ -60,9 +60,7 @@ async def _insert_testcases(
 
 async def list_problems() -> list[dict[str, str]]:
     async with get_db_connection() as db:
-        cursor = await db.execute(
-            "SELECT id, title FROM problems ORDER BY id"
-        )
+        cursor = await db.execute("SELECT id, title FROM problems ORDER BY id")
         rows = await cursor.fetchall()
     return [{"id": row["id"], "title": row["title"]} for row in rows]
 

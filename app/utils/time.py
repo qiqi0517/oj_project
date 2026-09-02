@@ -8,6 +8,4 @@ def utc_now() -> datetime:
 def to_iso8601(dt: datetime) -> str:
     if dt.tzinfo is None or dt.utcoffset() is None:
         raise ValueError("datetime must be timezone-aware")
-    return dt.astimezone(timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

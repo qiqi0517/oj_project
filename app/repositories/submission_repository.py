@@ -177,12 +177,10 @@ async def list_submissions(
         query_parameters = list(parameters)
         if page_size is not None:
             query += " LIMIT ? OFFSET ?"
-            query_parameters.extend(
-                [page_size, ((page or 1) - 1) * page_size]
-            )
+            query_parameters.extend([page_size, ((page or 1) - 1) * page_size])
         cursor = await db.execute(query, query_parameters)
         rows = await cursor.fetchall()
-    return [_row_to_submission(row) for row in rows], int(total_row[0])     # type: ignore
+    return [_row_to_submission(row) for row in rows], int(total_row[0])  # type: ignore
 
 
 async def set_submission_pending(

@@ -9,7 +9,6 @@ from app.services import log_service
 from app.utils.auth import require_admin
 from app.utils.response import success_response
 
-
 router = APIRouter(
     prefix="/api/logs",
     tags=["logs"],

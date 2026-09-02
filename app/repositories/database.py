@@ -1,8 +1,9 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-import aiosqlite
-from app.config import DATABASE_PATH
 
+import aiosqlite
+
+from app.config import DATABASE_PATH
 
 # create database tables
 CREATE_USERS_TABLE = """
@@ -118,15 +119,6 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 """
 
-CREATE_BACKUPS_TABLE = """
-CREATE TABLE IF NOT EXISTS backups (
-    id TEXT PRIMARY KEY,
-    created_at TEXT NOT NULL,
-    storage_type TEXT NOT NULL,
-    path TEXT NOT NULL
-);
-"""
-
 CREATE_ACCESS_LOGS_TABLE = """
 CREATE TABLE IF NOT EXISTS access_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,10 +151,8 @@ CREATE_TABLES = [
     CREATE_JUDGE_LOGS_TABLE,
     CREATE_AUDIT_LOGS_TABLE,
     CREATE_ACCESS_LOGS_TABLE,
-    CREATE_BACKUPS_TABLE,
     CREATE_LANGUAGES_TABLE,
 ]
-
 
 
 # general database connecter
@@ -185,7 +175,7 @@ async def init_database() -> None:
             await db.execute(create_table)
         # commit
         await db.commit()
-        
+
 
 async def reset_database() -> None:
     tables = (

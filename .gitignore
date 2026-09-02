@@ -27,11 +27,9 @@ htmlcov/
 temp/*
 !temp/.gitkeep
 
-# Runtime databases and backups
+# Runtime databases
 data/*.db
 data/*.db-*
-data/backups/*
-!data/backups/.gitkeep
 
 # Local secrets and machine-specific configuration
 .env

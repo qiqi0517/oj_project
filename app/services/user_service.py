@@ -27,7 +27,6 @@ from app.utils.exceptions import AppError
 from app.utils.password import hash_password, verify_password
 from app.utils.time import to_iso8601, utc_now
 
-
 INVALID_CREDENTIALS_MSG = "invalid username or password"
 
 
@@ -127,12 +126,9 @@ async def ensure_initial_admin() -> None:
         )
         return
 
-    if (
-        existing_user["role"] != UserRole.ADMIN.value
-        or not verify_password(
-            INITIAL_ADMIN_PASSWORD,
-            existing_user["password_hash"],
-        )
+    if existing_user["role"] != UserRole.ADMIN.value or not verify_password(
+        INITIAL_ADMIN_PASSWORD,
+        existing_user["password_hash"],
     ):
         await update_initial_admin(
             existing_user["id"],

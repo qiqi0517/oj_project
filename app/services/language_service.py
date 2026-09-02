@@ -10,7 +10,6 @@ from app.models.language import (
 from app.repositories import language_repository
 from app.utils.exceptions import AppError
 
-
 DEFAULT_LANGUAGES = (
     LanguageCreate(
         name="python",

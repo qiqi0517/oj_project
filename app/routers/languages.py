@@ -13,7 +13,6 @@ from app.services import language_service
 from app.utils.auth import get_current_user
 from app.utils.response import success_response
 
-
 router = APIRouter(
     prefix="/api/languages",
     tags=["languages"],

@@ -6,11 +6,10 @@ from fastapi.responses import JSONResponse
 from app.config import TESTING
 from app.models.response import ApiResponse
 from app.repositories.database import reset_database
-from app.services.user_service import ensure_initial_admin
 from app.services.language_service import ensure_default_languages
+from app.services.user_service import ensure_initial_admin
 from app.utils.auth import get_current_user, require_admin
 from app.utils.response import success_response
-
 
 router = APIRouter(
     prefix="/api",

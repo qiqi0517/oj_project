@@ -43,9 +43,7 @@ async def list_access_logs(
         query_parameters = list(parameters)
         if page_size is not None:
             query += " LIMIT ? OFFSET ?"
-            query_parameters.extend(
-                [page_size, ((page or 1) - 1) * page_size]
-            )
+            query_parameters.extend([page_size, ((page or 1) - 1) * page_size])
         cursor = await db.execute(query, query_parameters)
         rows = await cursor.fetchall()
     return [dict(row) for row in rows]

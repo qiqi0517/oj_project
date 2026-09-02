@@ -3,16 +3,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from app.models.response import ApiResponse
 from app.models.user import (
     UserLoginRequest,
     UserLoginResponse,
-    UserPublic,
 )
-from app.models.response import ApiResponse
-from app.services.user_service import to_user_public, authenticate_user
+from app.services.user_service import authenticate_user
 from app.utils.auth import get_current_user
 from app.utils.response import success_response
-
 
 router = APIRouter(
     prefix="/api/auth",

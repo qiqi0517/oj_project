@@ -11,6 +11,7 @@ router = APIRouter(
     tags=["health"],
 )
 
+
 @router.get("/health", response_model=ApiResponse[HealthResponse])
 async def health() -> JSONResponse:
     return success_response(data=get_health())

@@ -27,7 +27,6 @@ from app.repositories import (
 from app.utils.exceptions import AppError
 from app.utils.time import to_iso8601, utc_now
 
-
 judge_tasks: set[asyncio.Task[None]] = set()
 
 
@@ -88,9 +87,7 @@ async def judge_submission(submission_id: str) -> None:
         problem_row = await problem_repository.get_problem_by_id(
             submission["problem_id"]
         )
-        language_row = await language_repository.get_language(
-            submission["language"]
-        )
+        language_row = await language_repository.get_language(submission["language"])
         if problem_row is None or language_row is None:
             raise RuntimeError("judge configuration not found")
         problem = ProblemDetail.model_validate(problem_row)
@@ -158,9 +155,7 @@ async def get_submission_log(
     submission_id: str,
     current_user: dict[str, Any],
 ) -> SubmissionLogResponse:
-    context = await submission_repository.get_submission_log_context(
-        submission_id
-    )
+    context = await submission_repository.get_submission_log_context(submission_id)
     if context is None:
         raise AppError(status.HTTP_404_NOT_FOUND, "submission not found")
 
@@ -169,9 +164,7 @@ async def get_submission_log(
         or context["user_id"] == current_user["id"]
         or context["public_cases"]
     )
-    access_status = (
-        status.HTTP_200_OK if allowed else status.HTTP_403_FORBIDDEN
-    )
+    access_status = status.HTTP_200_OK if allowed else status.HTTP_403_FORBIDDEN
     await log_repository.create_access_log(
         user_id=current_user["id"],
         problem_id=context["problem_id"],
@@ -186,8 +179,7 @@ async def get_submission_log(
     return SubmissionLogResponse.model_validate(
         {
             "details": [
-                JudgeCaseDetailResponse.model_validate(detail)
-                for detail in details
+                JudgeCaseDetailResponse.model_validate(detail) for detail in details
             ],
             "score": context["score"],
             "counts": context["counts"],

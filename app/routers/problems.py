@@ -17,7 +17,6 @@ from app.services import problem_service
 from app.utils.auth import get_current_user, require_admin
 from app.utils.response import success_response
 
-
 router = APIRouter(
     prefix="/api/problems",
     tags=["problems"],
