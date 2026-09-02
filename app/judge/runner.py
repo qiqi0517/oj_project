@@ -159,8 +159,10 @@ async def run_language_case(
                 or compile_result.decode_error
             ):
                 compile_result.compile_error = True
-                compile_result.compile_info = (
-                    compile_result.stderr or compile_result.stdout
+                compile_output = compile_result.stderr or compile_result.stdout
+                compile_result.compile_info = compile_output.replace(
+                    str(run_dir),
+                    ".",
                 )[:2000]
                 return compile_result
 
