@@ -32,7 +32,6 @@ def _row_to_problem(row: aiosqlite.Row) -> dict[str, Any]:
         "memory_limit": row["memory_limit"],
         "author": row["author"],
         "difficulty": row["difficulty"],
-        "public_cases": bool(row["public_cases"]),
     }
 
 
@@ -120,7 +119,7 @@ async def create_problem(
                     problem.memory_limit,
                     problem.author,
                     problem.difficulty,
-                    int(problem.public_cases),
+                    0,
                     _dumps_json(problem.tags),
                     _dumps_json([sample.model_dump() for sample in problem.samples]),
                 ),
@@ -149,7 +148,7 @@ async def update_problem(
                 SET title = ?, description = ?, input_description = ?,
                     output_description = ?, constraints = ?, hint = ?, source = ?,
                     time_limit = ?, memory_limit = ?, author = ?, difficulty = ?,
-                    public_cases = ?, tags = ?, samples = ?
+                    tags = ?, samples = ?
                 WHERE id = ?
                 """,
                 (
@@ -164,7 +163,6 @@ async def update_problem(
                     problem.memory_limit,
                     problem.author,
                     problem.difficulty,
-                    int(problem.public_cases),
                     _dumps_json(problem.tags),
                     _dumps_json([sample.model_dump() for sample in problem.samples]),
                     problem_id,

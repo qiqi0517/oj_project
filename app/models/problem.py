@@ -31,7 +31,6 @@ class ProblemBase(BaseModel):
     memory_limit: int = Field(default=128, gt=0)
     author: str = ""
     difficulty: str = ""
-    public_cases: bool = False
 
     @field_validator(
         "id",
