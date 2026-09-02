@@ -6,4 +6,4 @@ class AccessLogResponse(BaseModel):
     problem_id: str
     action: str
     time: str
-    status: int
+    status: str

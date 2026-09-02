@@ -46,4 +46,10 @@ async def list_access_logs(
             query_parameters.extend([page_size, ((page or 1) - 1) * page_size])
         cursor = await db.execute(query, query_parameters)
         rows = await cursor.fetchall()
-    return [dict(row) for row in rows]
+    return [
+        {
+            **dict(row),
+            "status": str(row["status"]),
+        }
+        for row in rows
+    ]
