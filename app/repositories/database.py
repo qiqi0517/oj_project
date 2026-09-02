@@ -93,7 +93,6 @@ CREATE TABLE IF NOT EXISTS judge_logs (
     stdout TEXT NOT NULL,
     stderr TEXT NOT NULL,
     expected_output TEXT NOT NULL,
-    message TEXT,
     is_hidden INTEGER NOT NULL,
     created_at TEXT NOT NULL,
 

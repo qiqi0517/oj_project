@@ -283,9 +283,9 @@ async def save_judge_result(
                     INSERT INTO judge_logs (
                         submission_id, case_id, result, score, time_used,
                         memory_used, exit_code, input_data, stdout, stderr,
-                        expected_output, message, is_hidden, created_at
+                        expected_output, is_hidden, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
                     """,
                     (
                         submission_id,
@@ -299,7 +299,6 @@ async def save_judge_result(
                         case.stdout,
                         case.stderr,
                         testcase.output,
-                        case.msg,
                         finished_at,
                     ),
                 )
