@@ -1,14 +1,20 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from app.models.problem import ProblemCreate, ProblemUpdate
-from app.services import problem_service
-from app.utils.auth import (
-    get_current_user,
-    require_teacher_or_admin,
+from app.models.problem import (
+    LogVisibilityResponse,
+    LogVisibilityUpdate,
+    ProblemCreate,
+    ProblemDetail,
+    ProblemIdResponse,
+    ProblemListItem,
+    ProblemUpdate,
 )
+from app.models.response import ApiResponse
+from app.services import problem_service
+from app.utils.auth import get_current_user, require_admin
 from app.utils.response import success_response
 
 
@@ -18,78 +24,73 @@ router = APIRouter(
 )
 
 
-@router.get("")
+@router.get("/", response_model=ApiResponse[list[ProblemListItem]])
 async def list_problems(
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
-    current_user: dict[str, Any] = Depends(get_current_user),
+    _current_user: dict[str, Any] = Depends(get_current_user),
 ) -> JSONResponse:
-    data = await problem_service.list_problems(
-        page=page,
-        page_size=page_size,
-    )
-    return success_response(
-        data=data,
-        status_code=status.HTTP_200_OK,
-    )
+    return success_response(data=await problem_service.list_problems())
 
 
-@router.get("/{problem_id}")
-async def get_problem(
-    problem_id: str,
-    current_user: dict[str, Any] = Depends(get_current_user),
-) -> JSONResponse:
-    problem = await problem_service.get_problem_detail(
-        problem_id=problem_id,
-        current_user=current_user,
-    )
-    return success_response(
-        data=problem,
-        status_code=status.HTTP_200_OK,
-    )
-
-
-@router.post(
-    "",
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/", response_model=ApiResponse[ProblemIdResponse])
 async def create_problem(
     payload: ProblemCreate,
-    current_user: dict[str, Any] = Depends(require_teacher_or_admin),
+    _current_user: dict[str, Any] = Depends(get_current_user),
 ) -> JSONResponse:
-    problem = await problem_service.create_problem(payload)
+    data = await problem_service.create_problem(payload)
     return success_response(
-        data=problem,
-        message="problem created",
-        status_code=status.HTTP_201_CREATED,
+        data=data,
+        msg="add success",
     )
 
 
-@router.put("/{problem_id}")
+@router.get("/{problem_id}", response_model=ApiResponse[ProblemDetail])
+async def get_problem(
+    problem_id: str,
+    _current_user: dict[str, Any] = Depends(get_current_user),
+) -> JSONResponse:
+    problem = await problem_service.get_problem_detail(problem_id)
+    return success_response(data=problem)
+
+
+@router.put("/{problem_id}", response_model=ApiResponse[ProblemIdResponse])
 async def update_problem(
     problem_id: str,
     payload: ProblemUpdate,
-    current_user: dict[str, Any] = Depends(require_teacher_or_admin),
+    _current_user: dict[str, Any] = Depends(get_current_user),
 ) -> JSONResponse:
-    problem = await problem_service.update_problem(
-        problem_id=problem_id,
-        problem_data=payload,
-    )
+    data = await problem_service.update_problem(problem_id, payload)
     return success_response(
-        data=problem,
-        message="problem updated",
-        status_code=status.HTTP_200_OK,
+        data=data,
+        msg="update success",
     )
 
 
-@router.delete("/{problem_id}")
+@router.delete("/{problem_id}", response_model=ApiResponse[ProblemIdResponse])
 async def delete_problem(
     problem_id: str,
-    current_user: dict[str, Any] = Depends(require_teacher_or_admin),
+    _current_user: dict[str, Any] = Depends(require_admin),
 ) -> JSONResponse:
-    await problem_service.delete_problem(problem_id)
+    data = await problem_service.delete_problem(problem_id)
     return success_response(
-        data=None,
-        message="problem deleted",
-        status_code=status.HTTP_200_OK,
+        data=data,
+        msg="delete success",
+    )
+
+
+@router.put(
+    "/{problem_id}/log_visibility",
+    response_model=ApiResponse[LogVisibilityResponse],
+)
+async def update_log_visibility(
+    problem_id: str,
+    payload: LogVisibilityUpdate,
+    _current_user: dict[str, Any] = Depends(require_admin),
+) -> JSONResponse:
+    data = await problem_service.set_log_visibility(
+        problem_id,
+        payload.public_cases,
+    )
+    return success_response(
+        data=data,
+        msg="log visibility updated",
     )

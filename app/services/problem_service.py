@@ -1,131 +1,76 @@
-from collections.abc import Mapping
-from typing import Any
-
 import aiosqlite
 from fastapi import status
 
-from app.models.enums import UserRole
 from app.models.problem import (
+    LogVisibilityResponse,
     ProblemCreate,
+    ProblemDetail,
+    ProblemIdResponse,
     ProblemListItem,
-    StudentProblemDetail,
-    TeacherProblemDetail,
     ProblemUpdate,
 )
 from app.repositories import problem_repository
 from app.utils.exceptions import AppError
-from app.utils.time import to_iso8601, utc_now
 
 
-async def list_problems(
-    page: int,
-    page_size: int,
-) -> dict[str, Any]:
-    problem_rows = await problem_repository.list_problems(
-        page=page,
-        page_size=page_size,
-    )
-    total = await problem_repository.count_problems()
-    items = [
-        ProblemListItem.model_validate(row)
-        for row in problem_rows
-    ]
-    return {
-        "items": items,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-    }
+async def list_problems() -> list[ProblemListItem]:
+    rows = await problem_repository.list_problems()
+    return [ProblemListItem.model_validate(row) for row in rows]
 
 
-async def get_problem_detail(
-    problem_id: str,
-    current_user: Mapping[str, Any],
-) -> StudentProblemDetail | TeacherProblemDetail:
+async def get_problem_detail(problem_id: str) -> ProblemDetail:
     problem = await problem_repository.get_problem_by_id(problem_id)
     if problem is None:
-        raise AppError(
-            status.HTTP_404_NOT_FOUND,
-            "problem not found",
-        )
-    role = current_user["role"]
-    if role == UserRole.STUDENT.value:
-        return StudentProblemDetail.model_validate(problem)
-    elif role in {
-        UserRole.TEACHER.value,
-        UserRole.ADMIN.value,
-    }:
-        return TeacherProblemDetail.model_validate(problem)
-    else:
-        raise AppError(
-            status.HTTP_403_FORBIDDEN,
-            "permission denied",
-        )
+        raise AppError(status.HTTP_404_NOT_FOUND, "problem not found")
+    return ProblemDetail.model_validate(problem)
 
 
-async def create_problem(
-    problem: ProblemCreate,
-) -> TeacherProblemDetail:
-    existing_problem = await problem_repository.get_problem_by_id(
-        problem.id
-    )
-    if existing_problem is not None:
-        raise AppError(
-            status.HTTP_409_CONFLICT,
-            "problem already exists",
-        )
-    now = to_iso8601(utc_now())
+async def create_problem(problem: ProblemCreate) -> ProblemIdResponse:
+    if await problem_repository.get_problem_by_id(problem.id) is not None:
+        raise AppError(status.HTTP_409_CONFLICT, "problem already exists")
     try:
-        created_problem = await problem_repository.create_problem(
-            problem=problem,
-            created_at=now,
-            updated_at=now,
-        )
+        await problem_repository.create_problem(problem)
     except aiosqlite.IntegrityError as exc:
         raise AppError(
             status.HTTP_409_CONFLICT,
             "problem already exists",
         ) from exc
-    return TeacherProblemDetail.model_validate(created_problem)
+    return ProblemIdResponse.model_validate({"id": problem.id})
 
 
 async def update_problem(
     problem_id: str,
-    problem_data: ProblemUpdate,
-) -> TeacherProblemDetail:
-    existing_problem = await problem_repository.get_problem_by_id(problem_id)
-    if existing_problem is None:
+    problem: ProblemUpdate,
+) -> ProblemIdResponse:
+    if problem.id != problem_id:
         raise AppError(
-            status.HTTP_404_NOT_FOUND,
-            "problem not found",
+            status.HTTP_400_BAD_REQUEST,
+            "problem id does not match path",
         )
-    update_data = problem_data.model_dump(
-        mode="json",
-        exclude={
-            "test_cases",
-        },
+    if await problem_repository.get_problem_by_id(problem_id) is None:
+        raise AppError(status.HTTP_404_NOT_FOUND, "problem not found")
+    await problem_repository.update_problem(
+        problem_id,
+        ProblemCreate.model_validate(problem.model_dump()),
     )
-    updated_problem = await problem_repository.update_problem(
-        problem_id=problem_id,
-        problem_data=update_data,
-        test_cases=problem_data.test_cases,
-        updated_at=to_iso8601(utc_now()),
-    )
-    return TeacherProblemDetail.model_validate(updated_problem)
+    return ProblemIdResponse.model_validate({"id": problem_id})
 
 
-async def delete_problem(
+async def set_log_visibility(
     problem_id: str,
-) -> None:
-    existing_problem = await problem_repository.get_problem_by_id(problem_id)
-    if existing_problem is None:
-        raise AppError(
-            status.HTTP_404_NOT_FOUND,
-            "problem not found",
-        )
-    deleted = await problem_repository.delete_problem(problem_id)
-    if not deleted:
-        raise AppError(
-            status.HTTP_404_NOT_FOUND,
-            "problem not found",
-        )
+    public_cases: bool,
+) -> LogVisibilityResponse:
+    if not await problem_repository.update_log_visibility(
+        problem_id,
+        public_cases,
+    ):
+        raise AppError(status.HTTP_404_NOT_FOUND, "problem not found")
+    return LogVisibilityResponse.model_validate(
+        {"problem_id": problem_id, "public_cases": public_cases}
+    )
+
+
+async def delete_problem(problem_id: str) -> ProblemIdResponse:
+    if not await problem_repository.delete_problem(problem_id):
+        raise AppError(status.HTTP_404_NOT_FOUND, "problem not found")
+    return ProblemIdResponse.model_validate({"id": problem_id})
