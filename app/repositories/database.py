@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL,
-    is_active INTEGER NOT NULL DEFAULT 1,
+    submit_count INTEGER NOT NULL DEFAULT 0,
+    resolve_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -25,13 +26,15 @@ CREATE TABLE IF NOT EXISTS problems (
     input_description TEXT NOT NULL,
     output_description TEXT NOT NULL,
     constraints TEXT NOT NULL,
+    hint TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
     time_limit REAL NOT NULL,
     memory_limit INTEGER NOT NULL,
+    author TEXT NOT NULL DEFAULT '',
     difficulty TEXT NOT NULL,
+    public_cases INTEGER NOT NULL DEFAULT 0,
     tags TEXT NOT NULL,
-    samples TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    samples TEXT NOT NULL
 );
 """
 
@@ -42,8 +45,6 @@ CREATE TABLE IF NOT EXISTS test_cases (
     case_id TEXT NOT NULL,
     input_data TEXT NOT NULL,
     expected_output TEXT NOT NULL,
-    score INTEGER NOT NULL,
-    is_hidden INTEGER NOT NULL DEFAULT 0,
 
     UNIQUE(problem_id, case_id),
 
@@ -63,7 +64,11 @@ CREATE TABLE IF NOT EXISTS submissions (
     status TEXT NOT NULL,
     result TEXT,
     score INTEGER NOT NULL DEFAULT 0,
+    counts INTEGER NOT NULL DEFAULT 0,
     total_time REAL,
+    compile_info TEXT,
+    run_info TEXT,
+    error_info TEXT,
     created_at TEXT NOT NULL,
     started_at TEXT,
     finished_at TEXT,
@@ -122,6 +127,30 @@ CREATE TABLE IF NOT EXISTS backups (
 );
 """
 
+CREATE_ACCESS_LOGS_TABLE = """
+CREATE TABLE IF NOT EXISTS access_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    problem_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    time TEXT NOT NULL,
+    status INTEGER NOT NULL,
+
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+"""
+
+CREATE_LANGUAGES_TABLE = """
+CREATE TABLE IF NOT EXISTS languages (
+    name TEXT PRIMARY KEY,
+    file_ext TEXT NOT NULL,
+    compile_cmd TEXT,
+    run_cmd TEXT NOT NULL,
+    time_limit REAL,
+    memory_limit INTEGER
+);
+"""
+
 CREATE_TABLES = [
     CREATE_USERS_TABLE,
     CREATE_PROBLEMS_TABLE,
@@ -129,7 +158,9 @@ CREATE_TABLES = [
     CREATE_SUBMISSIONS_TABLE,
     CREATE_JUDGE_LOGS_TABLE,
     CREATE_AUDIT_LOGS_TABLE,
+    CREATE_ACCESS_LOGS_TABLE,
     CREATE_BACKUPS_TABLE,
+    CREATE_LANGUAGES_TABLE,
 ]
 
 
@@ -153,4 +184,21 @@ async def init_database() -> None:
         for create_table in CREATE_TABLES:
             await db.execute(create_table)
         # commit
+        await db.commit()
+        
+
+async def reset_database() -> None:
+    tables = (
+        "audit_logs",
+        "access_logs",
+        "judge_logs",
+        "submissions",
+        "test_cases",
+        "problems",
+        "languages",
+        "users",
+    )
+    async with get_db_connection() as db:
+        for table in tables:
+            await db.execute(f"DELETE FROM {table}")
         await db.commit()
