@@ -1,19 +1,20 @@
 import logging
 
 from fastapi import Request, status
-from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException
 
 
 logger = logging.getLogger(__name__)
 
 
 class AppError(Exception):
-    def __init__(self, status_code: int, message: str):
+    def __init__(self, status_code: int, msg: str):
         self.status_code = status_code
-        self.message = message
+        self.msg = msg
 
-        super().__init__(message)
+        super().__init__(msg)
 
 
 async def app_error_handler(
@@ -24,23 +25,39 @@ async def app_error_handler(
         status_code=exc.status_code,
         content={
             "code": exc.status_code,
-            "message": exc.message,
+            "msg": exc.msg,
             "data": None,
         },
     )
 
 
 async def validation_error_handler(
-    request: Request,
-    exc: RequestValidationError,
+    _request: Request,
+    _exc: RequestValidationError,
 ) -> JSONResponse:
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        status_code=status.HTTP_400_BAD_REQUEST,
         content={
-            "code": status.HTTP_422_UNPROCESSABLE_CONTENT,
-            "message": "validation error",
+            "code": status.HTTP_400_BAD_REQUEST,
+            "msg": "validation error",
             "data": None,
         },
+    )
+
+
+async def http_error_handler(
+    _request: Request,
+    exc: HTTPException,
+) -> JSONResponse:
+    msg = exc.detail if isinstance(exc.detail, str) else "request error"
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "code": exc.status_code,
+            "msg": msg,
+            "data": None,
+        },
+        headers=exc.headers,
     )
 
 
@@ -58,7 +75,7 @@ async def unexpected_error_handler(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
             "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
-            "message": "internal server error",
+            "msg": "internal server error",
             "data": None,
         },
     )
