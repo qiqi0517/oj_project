@@ -199,7 +199,40 @@ async def update_log_visibility(
 async def delete_problem(problem_id: str) -> bool:
     async with get_db_connection() as db:
         try:
-            await db.execute("BEGIN")
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute(
+                "SELECT 1 FROM problems WHERE id = ?",
+                (problem_id,),
+            )
+            if await cursor.fetchone() is None:
+                await db.rollback()
+                return False
+
+            cursor = await db.execute(
+                "SELECT DISTINCT user_id FROM submissions WHERE problem_id = ?",
+                (problem_id,),
+            )
+            affected_user_ids = [
+                row["user_id"] for row in await cursor.fetchall()
+            ]
+
+            await db.execute(
+                """
+                DELETE FROM judge_logs
+                WHERE submission_id IN (
+                    SELECT id FROM submissions WHERE problem_id = ?
+                )
+                """,
+                (problem_id,),
+            )
+            await db.execute(
+                "DELETE FROM submissions WHERE problem_id = ?",
+                (problem_id,),
+            )
+            await db.execute(
+                "DELETE FROM access_logs WHERE problem_id = ?",
+                (problem_id,),
+            )
             await db.execute(
                 "DELETE FROM test_cases WHERE problem_id = ?",
                 (problem_id,),
@@ -208,6 +241,23 @@ async def delete_problem(problem_id: str) -> bool:
                 "DELETE FROM problems WHERE id = ?",
                 (problem_id,),
             )
+
+            for user_id in affected_user_ids:
+                await db.execute(
+                    """
+                    UPDATE users
+                    SET submit_count = (
+                            SELECT COUNT(*) FROM submissions
+                            WHERE user_id = ?
+                        ),
+                        resolve_count = (
+                            SELECT COUNT(DISTINCT problem_id) FROM submissions
+                            WHERE user_id = ? AND result = 'AC'
+                        )
+                    WHERE id = ?
+                    """,
+                    (user_id, user_id, user_id),
+                )
             await db.commit()
         except Exception:
             await db.rollback()

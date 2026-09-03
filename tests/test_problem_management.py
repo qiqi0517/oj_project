@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from collections.abc import Generator
 from uuid import uuid4
 
@@ -25,6 +26,19 @@ def unique_username() -> str:
 def cleanup_problem_data() -> Generator[None, None, None]:
     yield
     with sqlite3.connect(DATABASE_PATH) as db:
+        submission_ids = [
+            row[0]
+            for row in db.execute(
+                "SELECT id FROM submissions WHERE problem_id LIKE 'NEWP_%'"
+            ).fetchall()
+        ]
+        for submission_id in submission_ids:
+            db.execute(
+                "DELETE FROM judge_logs WHERE submission_id = ?",
+                (submission_id,),
+            )
+        db.execute("DELETE FROM access_logs WHERE problem_id LIKE 'NEWP_%'")
+        db.execute("DELETE FROM submissions WHERE problem_id LIKE 'NEWP_%'")
         db.execute("DELETE FROM test_cases WHERE problem_id LIKE 'NEWP_%'")
         db.execute("DELETE FROM problems WHERE id LIKE 'NEWP_%'")
         db.execute("DELETE FROM users WHERE username LIKE 'testproblem_%'")
@@ -68,6 +82,26 @@ def make_problem(problem_id: str | None = None) -> dict:
             {"input": "-1 2\n", "output": "1\n"},
         ],
     }
+
+
+def create_accepted_submission(client: TestClient, problem_id: str) -> str:
+    response = client.post(
+        "/api/submissions/",
+        json={
+            "problem_id": problem_id,
+            "language": "python",
+            "code": "print(sum(map(int, input().split())))",
+        },
+    )
+    assert response.status_code == status.HTTP_200_OK
+    submission_id = response.json()["data"]["submission_id"]
+    for _ in range(100):
+        detail = client.get(f"/api/submissions/{submission_id}")
+        if detail.json()["data"]["status"] != "pending":
+            assert detail.json()["data"]["score"] == 20
+            return submission_id
+        time.sleep(0.02)
+    raise AssertionError("submission did not finish")
 
 
 def test_unauthenticated_problem_operations_return_401_before_body_errors() -> None:
@@ -188,6 +222,104 @@ def test_only_admin_can_delete_problem() -> None:
     assert deleted.json()["msg"] == "delete success"
     assert deleted.json()["data"] == {"id": problem["id"]}
     assert missing.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_delete_problem_cascades_history_and_updates_user_counts() -> None:
+    problem = make_problem()
+    with TestClient(app) as client:
+        user = register_and_login(client)
+        client.post("/api/problems/", json=problem)
+        submission_id = create_accepted_submission(client, problem["id"])
+        log_response = client.get(f"/api/submissions/{submission_id}/log")
+        client.post("/api/auth/logout")
+        login_admin(client)
+        deleted = client.delete(f"/api/problems/{problem['id']}")
+        user_response = client.get(f"/api/users/{user['user_id']}")
+
+    assert log_response.status_code == status.HTTP_200_OK
+    assert deleted.status_code == status.HTTP_200_OK
+    assert user_response.json()["data"]["submit_count"] == 0
+    assert user_response.json()["data"]["resolve_count"] == 0
+
+    with sqlite3.connect(DATABASE_PATH) as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM problems WHERE id = ?",
+            (problem["id"],),
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "SELECT COUNT(*) FROM test_cases WHERE problem_id = ?",
+            (problem["id"],),
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "SELECT COUNT(*) FROM submissions WHERE problem_id = ?",
+            (problem["id"],),
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "SELECT COUNT(*) FROM judge_logs WHERE submission_id = ?",
+            (submission_id,),
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "SELECT COUNT(*) FROM access_logs WHERE problem_id = ?",
+            (problem["id"],),
+        ).fetchone()[0] == 0
+
+
+def test_delete_problem_rolls_back_all_changes_on_failure() -> None:
+    problem = make_problem()
+    trigger_name = f"fail_delete_{uuid4().hex[:8]}"
+    with TestClient(app, raise_server_exceptions=False) as client:
+        user = register_and_login(client)
+        client.post("/api/problems/", json=problem)
+        submission_id = create_accepted_submission(client, problem["id"])
+        client.get(f"/api/submissions/{submission_id}/log")
+        client.post("/api/auth/logout")
+        login_admin(client)
+
+        with sqlite3.connect(DATABASE_PATH) as db:
+            db.execute(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE DELETE ON problems
+                WHEN OLD.id = '{problem['id']}'
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced delete failure');
+                END
+                """
+            )
+            db.commit()
+
+        response = client.delete(f"/api/problems/{problem['id']}")
+
+        with sqlite3.connect(DATABASE_PATH) as db:
+            db.execute(f"DROP TRIGGER {trigger_name}")
+            db.commit()
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    with sqlite3.connect(DATABASE_PATH) as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM problems WHERE id = ?",
+            (problem["id"],),
+        ).fetchone()[0] == 1
+        assert db.execute(
+            "SELECT COUNT(*) FROM test_cases WHERE problem_id = ?",
+            (problem["id"],),
+        ).fetchone()[0] == 2
+        assert db.execute(
+            "SELECT COUNT(*) FROM submissions WHERE id = ?",
+            (submission_id,),
+        ).fetchone()[0] == 1
+        assert db.execute(
+            "SELECT COUNT(*) FROM judge_logs WHERE submission_id = ?",
+            (submission_id,),
+        ).fetchone()[0] == 2
+        assert db.execute(
+            "SELECT COUNT(*) FROM access_logs WHERE problem_id = ?",
+            (problem["id"],),
+        ).fetchone()[0] == 1
+        assert db.execute(
+            "SELECT submit_count, resolve_count FROM users WHERE id = ?",
+            (user["user_id"],),
+        ).fetchone() == (1, 1)
 
 
 def test_only_admin_can_change_log_visibility() -> None:

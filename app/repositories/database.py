@@ -75,7 +75,11 @@ CREATE TABLE IF NOT EXISTS submissions (
     finished_at TEXT,
 
     FOREIGN KEY (user_id)
-        REFERENCES users(id)
+        REFERENCES users(id),
+
+    FOREIGN KEY (problem_id)
+        REFERENCES problems(id)
+        ON DELETE CASCADE
 );
 """
 
@@ -127,7 +131,8 @@ CREATE TABLE IF NOT EXISTS access_logs (
     time TEXT NOT NULL,
     status INTEGER NOT NULL,
 
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (problem_id) REFERENCES problems(id) ON DELETE CASCADE
 );
 """
 
