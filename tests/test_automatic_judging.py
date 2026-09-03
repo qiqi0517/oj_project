@@ -572,6 +572,51 @@ int main() {
 
 
 @pytest.mark.parametrize(
+    ("source_code", "expected_result", "time_limit", "memory_limit"),
+    [
+        (
+            "#include <iostream>\nint main() { std::cout << 0; }",
+            JudgeResult.WA,
+            1.0,
+            128,
+        ),
+        ("int main() { return 1; }", JudgeResult.RE, 1.0, 128),
+        ("int main() { while (true) {} }", JudgeResult.TLE, 0.1, 128),
+        (
+            """
+#include <chrono>
+#include <thread>
+#include <vector>
+int main() {
+    std::vector<char> data(256 * 1024 * 1024, 1);
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    return data[0] == 1 ? 0 : 1;
+}
+""",
+            JudgeResult.MLE,
+            3.0,
+            128,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_cpp_runtime_results_on_real_process(
+    source_code: str,
+    expected_result: JudgeResult,
+    time_limit: float,
+    memory_limit: int,
+) -> None:
+    result = await evaluate_cpp(
+        source_code,
+        [make_testcase("", "1\n")],
+        time_limit,
+        memory_limit,
+    )
+
+    assert result.result == expected_result
+
+
+@pytest.mark.parametrize(
     ("compile_result", "expected_message"),
     [
         (ProcessRunResult(timed_out=True), "compilation timed out"),

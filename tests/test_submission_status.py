@@ -119,10 +119,15 @@ def create_problem(client: TestClient, testcase_count: int = 1) -> str:
     return problem_id
 
 
-def submit(client: TestClient, problem_id: str, code: str) -> dict:
+def submit(
+    client: TestClient,
+    problem_id: str,
+    code: str,
+    language: str = "python",
+) -> dict:
     response = client.post(
         "/api/submissions/",
-        json={"problem_id": problem_id, "language": "python", "code": code},
+        json={"problem_id": problem_id, "language": language, "code": code},
     )
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["msg"] == "success"
@@ -173,6 +178,27 @@ def test_create_submission_runs_in_background_and_updates_counts() -> None:
     assert finished["error_info"] == ""
     assert user_response.json()["data"]["submit_count"] == 1
     assert user_response.json()["data"]["resolve_count"] == 1
+
+
+def test_cpp_submission_runs_through_api() -> None:
+    source_code = """
+#include <iostream>
+int main() {
+    int value;
+    std::cin >> value;
+    std::cout << value * 2 << std::endl;
+    return 0;
+}
+"""
+    with TestClient(app) as client:
+        register_login(client)
+        problem_id = create_problem(client)
+        created = submit(client, problem_id, source_code, language="cpp")
+        finished = wait_for_result(client, created["submission_id"])
+
+    assert finished["status"] == SubmissionStatus.SUCCESS.value
+    assert finished["score"] == finished["counts"] == 10
+    assert finished["compile_info"] == {"result": "success", "message": ""}
 
 
 def test_compilation_error_response_has_no_run_info(monkeypatch) -> None:
