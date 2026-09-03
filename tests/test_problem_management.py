@@ -111,14 +111,43 @@ def test_logged_in_user_can_create_list_view_and_update_problem() -> None:
     assert detail["hint"] == ""
     assert detail["source"] == ""
     assert detail["tags"] == []
-    assert detail["time_limit"] == 3.0
-    assert detail["memory_limit"] == 128
+    assert detail["time_limit"] is None
+    assert detail["memory_limit"] is None
     assert detail["author"] == ""
     assert detail["difficulty"] == ""
     assert "public_cases" not in detail
     assert update_response.status_code == status.HTTP_200_OK
     assert update_response.json()["msg"] == "update success"
     assert update_response.json()["data"] == {"id": problem["id"]}
+
+    with sqlite3.connect(DATABASE_PATH) as db:
+        stored_limits = db.execute(
+            "SELECT time_limit, memory_limit FROM problems WHERE id = ?",
+            (problem["id"],),
+        ).fetchone()
+    assert stored_limits == (None, None)
+
+
+def test_problem_explicit_limits_are_preserved() -> None:
+    problem = make_problem()
+    problem["time_limit"] = 1.5
+    problem["memory_limit"] = 64
+
+    with TestClient(app) as client:
+        register_and_login(client)
+        create_response = client.post("/api/problems/", json=problem)
+        detail_response = client.get(f"/api/problems/{problem['id']}")
+
+    assert create_response.status_code == status.HTTP_200_OK
+    assert detail_response.json()["data"]["time_limit"] == 1.5
+    assert detail_response.json()["data"]["memory_limit"] == 64
+
+    with sqlite3.connect(DATABASE_PATH) as db:
+        stored_limits = db.execute(
+            "SELECT time_limit, memory_limit FROM problems WHERE id = ?",
+            (problem["id"],),
+        ).fetchone()
+    assert stored_limits == (1.5, 64)
 
 
 def test_duplicate_missing_fields_and_id_mismatch() -> None:

@@ -27,8 +27,8 @@ class ProblemBase(BaseModel):
     hint: str = ""
     source: str = ""
     tags: list[str] = Field(default_factory=list)
-    time_limit: float = Field(default=3.0, gt=0)
-    memory_limit: int = Field(default=128, gt=0)
+    time_limit: float | None = Field(default=None, gt=0)
+    memory_limit: int | None = Field(default=None, gt=0)
     author: str = ""
     difficulty: str = ""
 

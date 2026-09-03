@@ -6,6 +6,9 @@ DATA_DIR = BASE_DIR / "data"
 DATABASE_PATH = DATA_DIR / "oj.db"
 TEMP_DIR = BASE_DIR / "temp"
 
+DEFAULT_TIME_LIMIT = 3.0
+DEFAULT_MEMORY_LIMIT = 128
+
 
 SESSION_SECRET = os.getenv("OJ_SESSION_SECRET", "development-only-secret")
 

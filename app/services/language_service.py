@@ -1,6 +1,7 @@
 import aiosqlite
 from fastapi import status
 
+from app.config import DEFAULT_MEMORY_LIMIT, DEFAULT_TIME_LIMIT
 from app.judge.runner import PYTHON_RUN_COMMAND, validate_language_commands
 from app.models.language import (
     LanguageCreate,
@@ -16,16 +17,16 @@ DEFAULT_LANGUAGES = (
         name="python",
         file_ext=".py",
         run_cmd=PYTHON_RUN_COMMAND,
-        time_limit=3.0,
-        memory_limit=128,
+        time_limit=DEFAULT_TIME_LIMIT,
+        memory_limit=DEFAULT_MEMORY_LIMIT,
     ),
     LanguageCreate(
         name="cpp",
         file_ext=".cpp",
         compile_cmd="g++ {src} -std=c++14 -o {exe}",
         run_cmd="{exe}",
-        time_limit=3.0,
-        memory_limit=128,
+        time_limit=DEFAULT_TIME_LIMIT,
+        memory_limit=DEFAULT_MEMORY_LIMIT,
     ),
 )
 

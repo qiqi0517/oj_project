@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from fastapi import status
 
+from app.config import DEFAULT_MEMORY_LIMIT, DEFAULT_TIME_LIMIT
 from app.judge.evaluator import evaluate_language
 from app.models.enums import JudgeResult, SubmissionStatus
 from app.models.language import LanguagePublic
@@ -28,6 +29,24 @@ from app.utils.exceptions import AppError
 from app.utils.time import to_iso8601, utc_now
 
 judge_tasks: set[asyncio.Task[None]] = set()
+
+
+def resolve_resource_limits(
+    problem: ProblemDetail,
+    language: LanguagePublic,
+) -> tuple[float, int]:
+    time_limit = problem.time_limit
+    if time_limit is None:
+        time_limit = language.time_limit
+    if time_limit is None:
+        time_limit = DEFAULT_TIME_LIMIT
+
+    memory_limit = problem.memory_limit
+    if memory_limit is None:
+        memory_limit = language.memory_limit
+    if memory_limit is None:
+        memory_limit = DEFAULT_MEMORY_LIMIT
+    return time_limit, memory_limit
 
 
 def start_judge_task(submission_id: str) -> None:
@@ -92,8 +111,7 @@ async def judge_submission(submission_id: str) -> None:
             raise RuntimeError("judge configuration not found")
         problem = ProblemDetail.model_validate(problem_row)
         language = LanguagePublic.model_validate(language_row)
-        time_limit = problem.time_limit or language.time_limit or 3.0
-        memory_limit = problem.memory_limit or language.memory_limit or 128
+        time_limit, memory_limit = resolve_resource_limits(problem, language)
         result = await evaluate_language(
             submission["code"],
             problem.testcases,

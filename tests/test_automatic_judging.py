@@ -16,8 +16,8 @@ from app.main import app
 from app.models.enums import JudgeResult
 from app.models.judge import ProcessRunResult
 from app.models.language import LanguagePublic
-from app.models.problem import TestCase as JudgeTestCase
-from app.services import language_service
+from app.models.problem import ProblemDetail, TestCase as JudgeTestCase
+from app.services import language_service, submission_service
 
 
 def make_testcase(input_data: str, output: str) -> JudgeTestCase:
@@ -58,6 +58,62 @@ def make_cpp_language(
         time_limit=time_limit,
         memory_limit=memory_limit,
     )
+
+
+def make_problem_with_limits(
+    time_limit: float | None,
+    memory_limit: int | None,
+) -> ProblemDetail:
+    return ProblemDetail(
+        id="LIMIT_TEST",
+        title="Limit test",
+        description="Test resource limit fallback.",
+        input_description="No input.",
+        output_description="No output.",
+        samples=[{"input": "", "output": ""}],
+        constraints="None.",
+        testcases=[{"input": "", "output": ""}],
+        time_limit=time_limit,
+        memory_limit=memory_limit,
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "problem_time",
+        "problem_memory",
+        "language_time",
+        "language_memory",
+        "expected",
+    ),
+    [
+        (None, None, 1.5, 64, (1.5, 64)),
+        (0.5, 32, 1.5, 64, (0.5, 32)),
+        (None, 32, 1.5, 64, (1.5, 32)),
+        (None, None, None, None, (3.0, 128)),
+    ],
+)
+def test_problem_language_and_system_limit_priority(
+    problem_time: float | None,
+    problem_memory: int | None,
+    language_time: float | None,
+    language_memory: int | None,
+    expected: tuple[float, int],
+) -> None:
+    language = LanguagePublic(
+        name="custom",
+        file_ext=".custom",
+        run_cmd="custom {src}",
+        time_limit=language_time,
+        memory_limit=language_memory,
+    )
+
+    limits = submission_service.resolve_resource_limits(
+        make_problem_with_limits(problem_time, problem_memory),
+        language,
+    )
+
+    assert limits == expected
 
 
 async def evaluate_python(
