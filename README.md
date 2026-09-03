@@ -79,6 +79,22 @@ python -m pytest
 
 测试覆盖题目管理、自动评测、用户权限、Submission 状态、日志和持久化/reset。Reset 测试使用 pytest 临时数据库，不会清空开发数据库。
 
+### WSL 验证结果
+
+2026-09-03 在 WSL2 Ubuntu 中完成实际验证：
+
+```text
+Linux 6.6.87.2-microsoft-standard-WSL2
+Python 3.12.3
+g++ 13.3.0（C++14）
+Judge 专项：37 passed
+全量测试：82 passed
+```
+
+Python 与 C++ 均通过真实 API 提交流程。Python 覆盖 AC、WA、RE、TLE、
+MLE、UNK，C++ 覆盖 AC、WA、RE、TLE、MLE、CE。测试结束后未发现残留
+Judge 子进程、用户源码或可执行文件。
+
 ## 运行数据
 
 - SQLite：`data/oj.db`

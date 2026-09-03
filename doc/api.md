@@ -146,8 +146,8 @@ POST /api/problems/
 | `hint` | `str` | 额外提示 |
 | `source` | `str` | 题目来源 |
 | `tags` | `list` | 题目标签 |
-| `time_limit` | `float` | 时间限制，单位秒，默认 `3` |
-| `memory_limit` | `int` | 内存限制，单位 MB，默认 `128` |
+| `time_limit` | `float` | 题目时间限制，单位秒；省略或为 `null` 时使用语言配置 |
+| `memory_limit` | `int` | 题目内存限制，单位 MB；省略或为 `null` 时使用语言配置 |
 | `author` | `str` | 题目作者 |
 | `difficulty` | `str` | 难度等级 |
 
@@ -239,6 +239,18 @@ URL 路径参数：
 problem_id
 ```
 
+### 删除行为
+
+删除题目时，在同一数据库事务中一并删除该题目的：
+
+- testcases
+- submissions
+- judge logs
+- access logs
+
+受影响用户的 `submit_count` 和 `resolve_count` 会根据剩余 Submission 重新计算。
+删除过程中任一步骤失败时，整个操作回滚，不删除任何相关数据。
+
 ### 响应
 
 ```json
@@ -295,6 +307,10 @@ author
 difficulty
 ```
 
+题目详情返回题目自身的原始限额配置。若题目未配置某一项，对应字段返回
+`null`；实际评测时，该项依次使用题目配置、语言配置、系统默认值。系统默认
+时间限制为 `3` 秒，默认内存限制为 `128` MB。时间和内存两项分别独立确定。
+
 示例：
 
 ```json
@@ -333,7 +349,7 @@ difficulty
 
 ### 默认字段
 
-没有提供的可选字段仍需返回该类型的默认值，例如：
+除限额字段外，没有提供的可选字段仍需返回该类型的默认值，例如：
 
 ```text
 str  → ""
@@ -691,8 +707,8 @@ POST /api/languages/
 | `file_ext` | `str` | 是 | 源代码文件扩展名 |
 | `compile_cmd` | `str` | 否 | 编译命令 |
 | `run_cmd` | `str` | 是 | 运行命令 |
-| `time_limit` | `float` | 否 | 默认时间限制，秒 |
-| `memory_limit` | `int` | 否 | 默认内存限制，MB |
+| `time_limit` | `float` | 否 | 语言默认时间限制，秒；省略或为 `null` 时使用系统默认 `3` 秒 |
+| `memory_limit` | `int` | 否 | 语言默认内存限制，MB；省略或为 `null` 时使用系统默认 `128` MB |
 
 ### 响应
 

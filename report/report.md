@@ -153,9 +153,25 @@ Streamlit 使用 `requests.Session` 保存后端 Cookie，并集中封装 REST A
 
 尚需在最终提交环境补充：
 
-- Linux/WSL 完整回归
-- GCC 9+ 回归；当前 Windows 开发机 g++ 为 8.3
 - 最终演示截图
+
+### 6.1 Linux/WSL 实际验证
+
+2026-09-03 在 WSL2 Ubuntu 环境完成验证：
+
+```text
+Linux 内核：6.6.87.2-microsoft-standard-WSL2
+Python：3.12.3
+G++：13.3.0（按 C++14 编译）
+python -m pytest tests/test_automatic_judging.py -q：37 passed
+python -m pytest tests -q：82 passed
+```
+
+全量测试产生 2 条 FastAPI/Starlette 第三方依赖弃用警告，没有功能失败。
+Python 实际覆盖 AC、WA、RE、TLE、MLE、UNK；C++ 实际覆盖 AC、WA、RE、
+TLE、MLE、CE，并各完成一次真实 API Submission。验证结束后未发现残留
+Judge 子进程、用户源码或可执行文件，C++ 编译错误信息中不包含服务器临时
+目录绝对路径。
 
 ## 7. 问题与解决过程
 
