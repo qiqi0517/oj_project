@@ -241,6 +241,25 @@ async def save_judge_result(
             )
             other_accepted = int((await cursor.fetchone())[0])  # type: ignore
 
+            compile_info = None
+            if has_compile_step and result.result.value != "UNK":
+                compile_info = json.dumps(
+                    {
+                        "result": (
+                            "error" if result.result.value == "CE" else "success"
+                        ),
+                        "message": result.compile_info or "",
+                    }
+                )
+            run_info = None
+            if result.result.value not in ("CE", "UNK"):
+                run_info = json.dumps(
+                    {
+                        "result": "finished",
+                        "message": f"{len(result.cases)} test cases finished",
+                    }
+                )
+
             await db.execute(
                 """
                 UPDATE submissions
@@ -254,26 +273,8 @@ async def save_judge_result(
                     result.score,
                     result.counts,
                     result.total_time,
-                    (
-                        json.dumps(
-                            {
-                                "result": (
-                                    "error"
-                                    if result.result.value == "CE"
-                                    else "success"
-                                ),
-                                "message": result.compile_info or "",
-                            }
-                        )
-                        if has_compile_step
-                        else None
-                    ),
-                    json.dumps(
-                        {
-                            "result": "finished",
-                            "message": f"{len(result.cases)} test cases finished",
-                        }
-                    ),
+                    compile_info,
+                    run_info,
                     result.error_info or "",
                     finished_at,
                     submission_id,

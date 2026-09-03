@@ -50,12 +50,12 @@ async def evaluate_case(
     )
     if run_result.system_error is not None:
         return build_case_result(case_id, JudgeResult.UNK, run_result)
+    if run_result.compile_error:
+        return build_case_result(case_id, JudgeResult.CE, run_result)
     if run_result.timed_out:
         return build_case_result(case_id, JudgeResult.TLE, run_result)
     if run_result.memory_exceeded:
         return build_case_result(case_id, JudgeResult.MLE, run_result)
-    if run_result.compile_error:
-        return build_case_result(case_id, JudgeResult.CE, run_result)
     if run_result.decode_error or run_result.exit_code != 0:
         return build_case_result(case_id, JudgeResult.RE, run_result)
     if compare_output(run_result.stdout, test_case.output):

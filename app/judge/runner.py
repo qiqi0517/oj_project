@@ -159,7 +159,14 @@ async def run_language_case(
                 or compile_result.decode_error
             ):
                 compile_result.compile_error = True
-                compile_output = compile_result.stderr or compile_result.stdout
+                if compile_result.timed_out:
+                    compile_output = "compilation timed out"
+                elif compile_result.memory_exceeded:
+                    compile_output = "compilation memory limit exceeded"
+                elif compile_result.decode_error:
+                    compile_output = "compiler output is not valid UTF-8"
+                else:
+                    compile_output = compile_result.stderr or compile_result.stdout or "compilation failed"
                 compile_result.compile_info = compile_output.replace(
                     str(run_dir),
                     ".",
