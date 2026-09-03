@@ -284,6 +284,67 @@ int main() {
     assert str(runner.TEMP_DIR) not in compile_error.compile_info
 
 
+@pytest.mark.parametrize(
+    ("compile_result", "expected_message"),
+    [
+        (ProcessRunResult(timed_out=True), "compilation timed out"),
+        (
+            ProcessRunResult(memory_exceeded=True),
+            "compilation memory limit exceeded",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_compile_limit_exceeded_is_compilation_error(
+    monkeypatch,
+    compile_result: ProcessRunResult,
+    expected_message: str,
+) -> None:
+    async def return_compile_result(*args, **kwargs) -> ProcessRunResult:
+        return compile_result
+
+    monkeypatch.setattr(runner, "execute_process", return_compile_result)
+    result = await evaluate_cpp(
+        "int main() { return 0; }",
+        [make_testcase("", "")],
+        1.0,
+        128,
+    )
+
+    assert result.result == JudgeResult.CE
+    assert result.compile_info == expected_message
+
+
+@pytest.mark.parametrize(
+    ("run_result", "expected_result"),
+    [
+        (ProcessRunResult(timed_out=True), JudgeResult.TLE),
+        (ProcessRunResult(memory_exceeded=True), JudgeResult.MLE),
+    ],
+)
+@pytest.mark.asyncio
+async def test_run_limit_exceeded_keeps_runtime_result(
+    monkeypatch,
+    run_result: ProcessRunResult,
+    expected_result: JudgeResult,
+) -> None:
+    process_results = [ProcessRunResult(exit_code=0), run_result]
+
+    async def return_next_result(*args, **kwargs) -> ProcessRunResult:
+        return process_results.pop(0)
+
+    monkeypatch.setattr(runner, "execute_process", return_next_result)
+    result = await evaluate_cpp(
+        "int main() { return 0; }",
+        [make_testcase("", "")],
+        1.0,
+        128,
+    )
+
+    assert result.result == expected_result
+    assert result.compile_info is None
+
+
 @pytest.mark.asyncio
 async def test_memory_limit_exceeded_result() -> None:
     result = await evaluate_python(

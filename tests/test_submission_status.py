@@ -11,7 +11,8 @@ from fastapi.testclient import TestClient
 
 from app.config import DATABASE_PATH
 from app.main import app
-from app.models.enums import SubmissionStatus
+from app.models.enums import JudgeResult, SubmissionStatus
+from app.models.judge import JudgeCaseResult, JudgeResultData
 from app.models.submission import (
     SubmissionCreateResponse,
     SubmissionListItem,
@@ -174,6 +175,103 @@ def test_create_submission_runs_in_background_and_updates_counts() -> None:
     assert user_response.json()["data"]["resolve_count"] == 1
 
 
+def test_compilation_error_response_has_no_run_info(monkeypatch) -> None:
+    async def return_compilation_error(*args, **kwargs) -> JudgeResultData:
+        case = JudgeCaseResult(
+            id=1,
+            result=JudgeResult.CE,
+            score=0,
+            time=0.1,
+            memory=1,
+            exit_code=1,
+            stderr="compile error",
+            compile_info="compile error",
+        )
+        return JudgeResultData(
+            result=JudgeResult.CE,
+            score=0,
+            counts=10,
+            total_time=0.1,
+            cases=[case],
+            compile_info="compile error",
+        )
+
+    monkeypatch.setattr(
+        submission_service,
+        "evaluate_language",
+        return_compilation_error,
+    )
+    with TestClient(app) as client:
+        register_login(client)
+        problem_id = create_problem(client)
+        response = client.post(
+            "/api/submissions/",
+            json={
+                "problem_id": problem_id,
+                "language": "cpp",
+                "code": "int main( {",
+            },
+        )
+        created = response.json()["data"]
+        finished = wait_for_result(client, created["submission_id"])
+
+    assert finished["status"] == SubmissionStatus.SUCCESS.value
+    assert finished["compile_info"] == {
+        "result": "error",
+        "message": "compile error",
+    }
+    assert finished["run_info"] is None
+    assert finished["error_info"] == ""
+
+
+def test_compilation_success_response_has_compile_and_run_info(monkeypatch) -> None:
+    async def return_accepted_result(*args, **kwargs) -> JudgeResultData:
+        case = JudgeCaseResult(
+            id=1,
+            result=JudgeResult.AC,
+            score=10,
+            time=0.1,
+            memory=1,
+            exit_code=0,
+        )
+        return JudgeResultData(
+            result=JudgeResult.AC,
+            score=10,
+            counts=10,
+            total_time=0.1,
+            cases=[case],
+        )
+
+    monkeypatch.setattr(
+        submission_service,
+        "evaluate_language",
+        return_accepted_result,
+    )
+    with TestClient(app) as client:
+        register_login(client)
+        problem_id = create_problem(client)
+        response = client.post(
+            "/api/submissions/",
+            json={
+                "problem_id": problem_id,
+                "language": "cpp",
+                "code": "int main() { return 0; }",
+            },
+        )
+        created = response.json()["data"]
+        finished = wait_for_result(client, created["submission_id"])
+
+    assert finished["compile_info"] == {
+        "result": "success",
+        "message": "",
+    }
+    assert finished["run_info"] == {
+        "result": "finished",
+        "message": "1 test cases finished",
+    }
+    assert finished["error_info"] == ""
+
+
 def test_submission_ownership_and_admin_access() -> None:
     with TestClient(app) as owner_client, TestClient(app) as other_client:
         owner = register_login(owner_client)
@@ -266,6 +364,9 @@ def test_pending_submission_cannot_be_rejudged(monkeypatch) -> None:
         register_login(client)
         problem_id = create_problem(client)
         created = submit(client, problem_id, "print(int(input()) * 2)")
+        pending_detail = client.get(
+            f"/api/submissions/{created['submission_id']}"
+        ).json()["data"]
         client.post("/api/auth/logout")
         login_admin(client)
         response = client.put(
@@ -274,6 +375,15 @@ def test_pending_submission_cannot_be_rejudged(monkeypatch) -> None:
 
     assert response.status_code == status.HTTP_409_CONFLICT
     assert response.json()["code"] == status.HTTP_409_CONFLICT
+    assert pending_detail == {
+        "submission_id": created["submission_id"],
+        "status": SubmissionStatus.PENDING.value,
+        "score": None,
+        "counts": None,
+        "compile_info": None,
+        "run_info": None,
+        "error_info": None,
+    }
     assert started_submission_ids == [created["submission_id"]]
 
 
@@ -402,6 +512,10 @@ def test_rejudge_system_error_revokes_sole_accepted_problem(
 
     assert response.status_code == status.HTTP_200_OK
     assert failed_result["status"] == SubmissionStatus.ERROR.value
+    assert failed_result["score"] == 0
+    assert failed_result["counts"] == 0
+    assert failed_result["compile_info"] is None
+    assert failed_result["run_info"] is None
     assert failed_result["error_info"] == "judge internal error"
     assert user_data["resolve_count"] == 0
     assert stored == (None, 0, 0)
