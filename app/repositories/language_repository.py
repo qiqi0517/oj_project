@@ -58,6 +58,24 @@ async def list_languages() -> list[dict[str, Any]]:
 
 
 async def ensure_language(language: LanguageCreate) -> None:
-    if await get_language(language.name) is not None:
+    if await get_language(language.name) is None:
+        await create_language(language)
         return
-    await create_language(language)
+    async with get_db_connection() as db:
+        await db.execute(
+            """
+            UPDATE languages
+            SET file_ext = ?, compile_cmd = ?, run_cmd = ?,
+                time_limit = ?, memory_limit = ?
+            WHERE name = ?
+            """,
+            (
+                language.file_ext,
+                language.compile_cmd,
+                language.run_cmd,
+                language.time_limit,
+                language.memory_limit,
+                language.name,
+            ),
+        )
+        await db.commit()

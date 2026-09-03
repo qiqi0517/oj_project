@@ -1,5 +1,5 @@
 from app.judge.comparator import compare_output
-from app.judge.runner import run_language_case
+from app.judge.runner import PYTHON_RUN_COMMAND, run_language_case
 from app.models.enums import JudgeResult
 from app.models.judge import JudgeCaseResult, JudgeResultData, ProcessRunResult
 from app.models.language import LanguagePublic
@@ -37,7 +37,7 @@ async def evaluate_case(
             name="python",
             file_ext=".py",
             compile_cmd=None,
-            run_cmd="python3 {src}",
+            run_cmd=PYTHON_RUN_COMMAND,
             time_limit=time_limit,
             memory_limit=memory_limit,
         )

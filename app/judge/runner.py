@@ -5,6 +5,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from string import Formatter
 from uuid import uuid4
 
 import psutil
@@ -12,6 +13,8 @@ import psutil
 from app.config import TEMP_DIR
 from app.models.judge import ProcessRunResult
 from app.models.language import LanguagePublic
+
+PYTHON_RUN_COMMAND = f'"{sys.executable}" {{src}}'
 
 
 def create_run_directory() -> Path:
@@ -110,16 +113,53 @@ async def execute_process(
     )
 
 
+def split_command_template(template: str) -> list[str]:
+    parts = shlex.split(template, posix=os.name != "nt")
+    if os.name == "nt":
+        parts = [
+            part[1:-1]
+            if len(part) >= 2 and part[0] == part[-1] and part[0] in "\"'"
+            else part
+            for part in parts
+        ]
+    return parts
+
+
+def command_placeholders(template: str) -> set[str]:
+    placeholders: set[str] = set()
+    for _, field_name, format_spec, conversion in Formatter().parse(template):
+        if format_spec or conversion:
+            raise ValueError("language command cannot format placeholders")
+        if field_name is not None:
+            placeholders.add(field_name)
+    return placeholders
+
+
+def validate_language_commands(
+    compile_cmd: str | None,
+    run_cmd: str,
+) -> None:
+    templates = [run_cmd]
+    if compile_cmd is not None:
+        templates.append(compile_cmd)
+    for template in templates:
+        if not template.strip():
+            raise ValueError("language command cannot be empty")
+        if not split_command_template(template):
+            raise ValueError("language command cannot be empty")
+        if not command_placeholders(template) <= {"src", "exe"}:
+            raise ValueError("language command contains unsupported placeholders")
+
+
 def format_command(
     template: str,
     source_path: Path,
     executable_path: Path,
 ) -> list[str]:
-    command = template.format(
-        src=str(source_path),
-        exe=str(executable_path),
-    )
-    return shlex.split(command, posix=os.name != "nt")
+    return [
+        part.format(src=str(source_path), exe=str(executable_path))
+        for part in split_command_template(template)
+    ]
 
 
 async def run_language_case(
@@ -131,6 +171,7 @@ async def run_language_case(
 ) -> ProcessRunResult:
     run_dir: Path | None = None
     try:
+        validate_language_commands(language.compile_cmd, language.run_cmd)
         run_dir = create_run_directory()
         source_path = write_source_file(
             run_dir,
@@ -173,14 +214,11 @@ async def run_language_case(
                 )[:2000]
                 return compile_result
 
-        if language.name == "python":
-            command = [sys.executable, str(source_path)]
-        else:
-            command = format_command(
-                language.run_cmd,
-                source_path,
-                executable_path,
-            )
+        command = format_command(
+            language.run_cmd,
+            source_path,
+            executable_path,
+        )
         return await execute_process(
             command,
             input_data.encode("utf-8"),

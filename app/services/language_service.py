@@ -1,6 +1,7 @@
 import aiosqlite
 from fastapi import status
 
+from app.judge.runner import PYTHON_RUN_COMMAND, validate_language_commands
 from app.models.language import (
     LanguageCreate,
     LanguageCreateResponse,
@@ -14,7 +15,7 @@ DEFAULT_LANGUAGES = (
     LanguageCreate(
         name="python",
         file_ext=".py",
-        run_cmd="python3 {src}",
+        run_cmd=PYTHON_RUN_COMMAND,
         time_limit=3.0,
         memory_limit=128,
     ),
@@ -35,6 +36,10 @@ async def ensure_default_languages() -> None:
 
 
 async def register_language(language: LanguageCreate) -> LanguageCreateResponse:
+    try:
+        validate_language_commands(language.compile_cmd, language.run_cmd)
+    except ValueError as exc:
+        raise AppError(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     if await language_repository.get_language(language.name) is not None:
         raise AppError(status.HTTP_400_BAD_REQUEST, "language already exists")
     try:

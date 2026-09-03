@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 from pathlib import Path
 from uuid import uuid4
@@ -15,6 +16,7 @@ from app.models.enums import JudgeResult
 from app.models.judge import ProcessRunResult
 from app.models.language import LanguagePublic
 from app.models.problem import TestCase as JudgeTestCase
+from app.services import language_service
 
 
 def make_testcase(input_data: str, output: str) -> JudgeTestCase:
@@ -29,7 +31,7 @@ def make_python_language(
         name="python",
         file_ext=".py",
         compile_cmd=None,
-        run_cmd="python3 {src}",
+        run_cmd=runner.PYTHON_RUN_COMMAND,
         time_limit=time_limit,
         memory_limit=memory_limit,
     )
@@ -81,6 +83,7 @@ async def evaluate_cpp(
 
 def test_language_list_and_registration() -> None:
     language_name = f"language_{uuid4().hex[:8]}"
+    compiled_language_name = f"language_cpp_{uuid4().hex[:8]}"
     username = f"testlanguage_{uuid4().hex[:8]}"
     try:
         with TestClient(app) as client:
@@ -100,10 +103,52 @@ def test_language_list_and_registration() -> None:
                     "name": language_name,
                     "file_ext": ".txt",
                     "compile_cmd": None,
-                    "run_cmd": "python3 {src}",
+                    "run_cmd": runner.PYTHON_RUN_COMMAND,
+                },
+            )
+            compiled_response = client.post(
+                "/api/languages/",
+                json={
+                    "name": compiled_language_name,
+                    "file_ext": ".cpp",
+                    "compile_cmd": "g++ {src} -std=c++14 -o {exe}",
+                    "run_cmd": "{exe}",
                 },
             )
             updated_list = client.get("/api/languages/")
+
+        interpreted_language = asyncio.run(
+            language_service.get_language(language_name)
+        )
+        compiled_language = asyncio.run(
+            language_service.get_language(compiled_language_name)
+        )
+        interpreted_result = asyncio.run(
+            evaluate_language(
+                "print(int(input()) * 2)",
+                [make_testcase("3\n", "6\n")],
+                1.0,
+                128,
+                interpreted_language,
+            )
+        )
+        compiled_result = asyncio.run(
+            evaluate_language(
+                """
+#include <iostream>
+int main() {
+    int value;
+    std::cin >> value;
+    std::cout << value * 2 << std::endl;
+    return 0;
+}
+""",
+                [make_testcase("3\n", "6\n")],
+                2.0,
+                128,
+                compiled_language,
+            )
+        )
 
         assert list_response.status_code == status.HTTP_200_OK
         assert {"python", "cpp"}.issubset(list_response.json()["data"]["name"])
@@ -114,12 +159,104 @@ def test_language_list_and_registration() -> None:
             "msg": "language registered",
             "data": {"name": language_name},
         }
+        assert compiled_response.status_code == status.HTTP_200_OK
         assert language_name in updated_list.json()["data"]["name"]
+        assert compiled_language_name in updated_list.json()["data"]["name"]
+        assert interpreted_result.result == JudgeResult.AC
+        assert compiled_result.result == JudgeResult.AC
     finally:
         with sqlite3.connect(DATABASE_PATH) as db:
-            db.execute("DELETE FROM languages WHERE name = ?", (language_name,))
+            db.execute(
+                "DELETE FROM languages WHERE name IN (?, ?)",
+                (language_name, compiled_language_name),
+            )
             db.execute("DELETE FROM users WHERE username = ?", (username,))
             db.commit()
+
+
+def test_language_registration_allows_new_toolchains_and_checks_templates() -> None:
+    username = f"testlanguage_{uuid4().hex[:8]}"
+    language_names = [f"language_open_{uuid4().hex[:8]}" for _ in range(3)]
+    new_toolchains = [
+        {"compile_cmd": None, "run_cmd": "node {src}"},
+        {
+            "compile_cmd": "javac {src}",
+            "run_cmd": "java Main",
+        },
+        {
+            "compile_cmd": "go build -o {exe} {src}",
+            "run_cmd": "{exe}",
+        },
+    ]
+    try:
+        with TestClient(app) as client:
+            client.post(
+                "/api/users/",
+                json={"username": username, "password": "secret1"},
+            )
+            client.post(
+                "/api/auth/login",
+                json={"username": username, "password": "secret1"},
+            )
+            accepted_responses = [
+                client.post(
+                    "/api/languages/",
+                    json={
+                        "name": language_name,
+                        "file_ext": ".txt",
+                        **commands,
+                    },
+                )
+                for language_name, commands in zip(language_names, new_toolchains)
+            ]
+            invalid_placeholder = client.post(
+                "/api/languages/",
+                json={
+                    "name": f"language_invalid_{uuid4().hex[:8]}",
+                    "file_ext": ".txt",
+                    "compile_cmd": None,
+                    "run_cmd": "python {source}",
+                },
+            )
+
+        assert all(
+            response.status_code == status.HTTP_200_OK
+            for response in accepted_responses
+        )
+        assert invalid_placeholder.status_code == status.HTTP_400_BAD_REQUEST
+    finally:
+        with sqlite3.connect(DATABASE_PATH) as db:
+            db.executemany(
+                "DELETE FROM languages WHERE name = ?",
+                [(language_name,) for language_name in language_names],
+            )
+            db.execute("DELETE FROM users WHERE username = ?", (username,))
+            db.commit()
+
+
+@pytest.mark.asyncio
+async def test_dynamic_language_runs_from_temp_path_with_spaces(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    temp_dir = tmp_path / "judge temporary files"
+    temp_dir.mkdir()
+    monkeypatch.setattr(runner, "TEMP_DIR", temp_dir)
+    result = await evaluate_language(
+        "print(int(input()) * 2)",
+        [make_testcase("3\n", "6\n")],
+        1.0,
+        128,
+        LanguagePublic(
+            name="python_alias",
+            file_ext=".py",
+            compile_cmd=None,
+            run_cmd=runner.PYTHON_RUN_COMMAND,
+        ),
+    )
+
+    assert result.result == JudgeResult.AC
+    assert list(temp_dir.iterdir()) == []
 
 
 @pytest.mark.asyncio
