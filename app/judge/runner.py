@@ -2,11 +2,14 @@ import asyncio
 import os
 import shlex
 import shutil
+import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
 from string import Formatter
 from uuid import uuid4
+from typing import Any
 
 import psutil
 
@@ -40,25 +43,103 @@ def decode_output(data: bytes) -> tuple[str, bool]:
         return "", True
 
 
-async def terminate_process(process: asyncio.subprocess.Process) -> None:
+def track_process_tree(
+    process_id: int,
+    tracked_processes: dict[int, psutil.Process],
+) -> None:
+    try:
+        root_process = psutil.Process(process_id)
+        processes = [root_process, *root_process.children(recursive=True)]
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return
+    for process in processes:
+        tracked_processes[process.pid] = process
+
+
+def find_orphaned_children(
+    process_id: int,
+    tracked_processes: dict[int, psutil.Process],
+) -> None:
+    parent_ids = {process_id, *tracked_processes}
+    for _ in range(3):
+        found_child = False
+        for process in psutil.process_iter(["pid", "ppid"]):
+            try:
+                if (
+                    process.info["ppid"] in parent_ids
+                    and process.pid not in tracked_processes
+                ):
+                    tracked_processes[process.pid] = process
+                    parent_ids.add(process.pid)
+                    found_child = True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        if not found_child:
+            break
+
+
+def kill_tracked_processes(processes: list[psutil.Process]) -> None:
+    for process in reversed(processes):
+        try:
+            process.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    _, alive = psutil.wait_procs(processes, timeout=1.0)
+    for process in alive:
+        try:
+            process.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    if alive:
+        psutil.wait_procs(alive, timeout=1.0)
+
+
+async def terminate_process_tree(
+    process: asyncio.subprocess.Process,
+    tracked_processes: dict[int, psutil.Process],
+) -> None:
+    track_process_tree(process.pid, tracked_processes)
+    find_orphaned_children(process.pid, tracked_processes)
+    if os.name != "nt":
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    await asyncio.to_thread(
+        kill_tracked_processes,
+        [
+            tracked_process
+            for tracked_process in tracked_processes.values()
+            if tracked_process.pid != process.pid
+        ],
+    )
     if process.returncode is None:
-        process.kill()
-        await process.wait()
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+    await process.wait()
 
 
 def cleanup_run_directory(run_dir: Path) -> None:
     shutil.rmtree(run_dir, ignore_errors=True)
 
 
-def process_memory_bytes(process_id: int) -> int:
-    try:
-        process = psutil.Process(process_id)
-        children = process.children(recursive=True)
-        return process.memory_info().rss + sum(
-            child.memory_info().rss for child in children if child.is_running()
-        )
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        return 0
+def process_memory_bytes(
+    process_id: int,
+    tracked_processes: dict[int, psutil.Process] | None = None,
+) -> int:
+    if tracked_processes is None:
+        tracked_processes = {}
+    track_process_tree(process_id, tracked_processes)
+    total_memory = 0
+    for process in tracked_processes.values():
+        try:
+            if process.is_running():
+                total_memory += process.memory_info().rss
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return total_memory
 
 
 async def execute_process(
@@ -69,35 +150,52 @@ async def execute_process(
     cwd: Path,
 ) -> ProcessRunResult:
     start_time = time.perf_counter()
+    process_options: dict[str, Any]
+    if os.name == "nt":
+        process_options = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    else:
+        process_options = {"start_new_session": True}
     process = await asyncio.create_subprocess_exec(
         *command,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
+        **process_options,
     )
     communicate_task = asyncio.create_task(process.communicate(input_bytes))
+    tracked_processes: dict[int, psutil.Process] = {}
+    track_process_tree(process.pid, tracked_processes)
     peak_memory = 0
     timed_out = False
     memory_exceeded = False
     memory_limit_bytes = memory_limit * 1024 * 1024
 
-    while not communicate_task.done():
-        elapsed = time.perf_counter() - start_time
-        if elapsed > time_limit:
-            timed_out = True
-            await terminate_process(process)
-            break
-        current_memory = process_memory_bytes(process.pid)
-        peak_memory = max(peak_memory, current_memory)
-        if current_memory > memory_limit_bytes:
-            memory_exceeded = True
-            await terminate_process(process)
-            break
-        await asyncio.sleep(0.01)
+    try:
+        while not communicate_task.done():
+            elapsed = time.perf_counter() - start_time
+            if elapsed > time_limit:
+                timed_out = process.returncode is None
+                await terminate_process_tree(process, tracked_processes)
+                break
+            current_memory = process_memory_bytes(
+                process.pid,
+                tracked_processes,
+            )
+            peak_memory = max(peak_memory, current_memory)
+            if current_memory > memory_limit_bytes:
+                memory_exceeded = True
+                await terminate_process_tree(process, tracked_processes)
+                break
+            await asyncio.sleep(0.01)
 
-    stdout_bytes, stderr_bytes = await communicate_task
-    peak_memory = max(peak_memory, process_memory_bytes(process.pid))
+        stdout_bytes, stderr_bytes = await communicate_task
+        peak_memory = max(
+            peak_memory,
+            process_memory_bytes(process.pid, tracked_processes),
+        )
+    finally:
+        await terminate_process_tree(process, tracked_processes)
     time_used = time.perf_counter() - start_time
     stdout, stdout_decode_error = decode_output(stdout_bytes)
     stderr, stderr_decode_error = decode_output(stderr_bytes)
@@ -207,7 +305,11 @@ async def run_language_case(
                 elif compile_result.decode_error:
                     compile_output = "compiler output is not valid UTF-8"
                 else:
-                    compile_output = compile_result.stderr or compile_result.stdout or "compilation failed"
+                    compile_output = (
+                        compile_result.stderr
+                        or compile_result.stdout
+                        or "compilation failed"
+                    )
                 compile_result.compile_info = compile_output.replace(
                     str(run_dir),
                     ".",

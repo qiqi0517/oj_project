@@ -4,6 +4,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+import psutil
 from fastapi import status
 from fastapi.testclient import TestClient
 
@@ -21,6 +22,14 @@ from app.services import language_service
 
 def make_testcase(input_data: str, output: str) -> JudgeTestCase:
     return JudgeTestCase(input=input_data, output=output)
+
+
+def process_is_running(process_id: int) -> bool:
+    try:
+        process = psutil.Process(process_id)
+        return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return False
 
 
 def make_python_language(
@@ -361,6 +370,91 @@ async def test_temporary_files_are_removed(tmp_path: Path, monkeypatch) -> None:
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.asyncio
+async def test_timeout_kills_child_process_tree(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(runner, "TEMP_DIR", tmp_path)
+    source_code = (
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "'import time; time.sleep(30)'])\n"
+        "print(child.pid, flush=True)\n"
+        "while True:\n"
+        "    time.sleep(0.1)\n"
+    )
+    result = await runner.run_language_case(
+        source_code,
+        "",
+        0.3,
+        128,
+        make_python_language(0.3, 128),
+    )
+    child_process_id = int(result.stdout.strip())
+
+    assert result.timed_out is True
+    assert process_is_running(child_process_id) is False
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_child_process_memory_counts_toward_limit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(runner, "TEMP_DIR", tmp_path)
+    child_code = (
+        "import time; "
+        "data = bytearray(96 * 1024 * 1024); "
+        "time.sleep(30)"
+    )
+    source_code = (
+        "import subprocess, sys, time\n"
+        f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+        "print(child.pid, flush=True)\n"
+        "time.sleep(30)\n"
+    )
+    result = await runner.run_language_case(
+        source_code,
+        "",
+        3.0,
+        48,
+        make_python_language(3.0, 48),
+    )
+    child_process_id = int(result.stdout.strip())
+
+    assert result.memory_exceeded is True
+    assert result.memory_used > 48
+    assert process_is_running(child_process_id) is False
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_normal_exit_cleans_background_child(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(runner, "TEMP_DIR", tmp_path)
+    child_code = "import time; time.sleep(30)"
+    source_code = (
+        "import subprocess, sys\n"
+        f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}], "
+        "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL)\n"
+        "print(child.pid, flush=True)\n"
+    )
+    result = await runner.run_language_case(
+        source_code,
+        "",
+        1.0,
+        128,
+        make_python_language(1.0, 128),
+    )
+    child_process_id = int(result.stdout.strip())
+
+    assert result.exit_code == 0
+    assert process_is_running(child_process_id) is False
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_compare_output_ignores_trailing_spaces() -> None:
     assert compare_output("3   \n", "3\n") is True
 
@@ -495,4 +589,22 @@ async def test_memory_limit_exceeded_result() -> None:
         2.0,
         32,
     )
+    assert result.result == JudgeResult.MLE
+
+
+@pytest.mark.asyncio
+async def test_continuous_memory_growth_result() -> None:
+    result = await evaluate_python(
+        (
+            "import time\n"
+            "data = []\n"
+            "while True:\n"
+            "    data.append(bytearray(2 * 1024 * 1024))\n"
+            "    time.sleep(0.01)"
+        ),
+        [make_testcase("", "")],
+        3.0,
+        48,
+    )
+
     assert result.result == JudgeResult.MLE
