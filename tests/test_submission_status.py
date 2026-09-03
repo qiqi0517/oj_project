@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sqlite3
 import time
@@ -16,6 +17,8 @@ from app.models.submission import (
     SubmissionListItem,
     SubmissionListResponse,
 )
+from app.services import submission_service
+from app.utils.exceptions import AppError
 from app.utils.response import success_response
 
 TEST_PASSWORD = "secret1"
@@ -249,3 +252,185 @@ def test_only_admin_can_rejudge_and_submission_id_is_reused() -> None:
         "status": "pending",
     }
     assert detail.status_code == status.HTTP_200_OK
+
+
+def test_pending_submission_cannot_be_rejudged(monkeypatch) -> None:
+    started_submission_ids: list[str] = []
+    monkeypatch.setattr(
+        submission_service,
+        "start_judge_task",
+        started_submission_ids.append,
+    )
+
+    with TestClient(app) as client:
+        register_login(client)
+        problem_id = create_problem(client)
+        created = submit(client, problem_id, "print(int(input()) * 2)")
+        client.post("/api/auth/logout")
+        login_admin(client)
+        response = client.put(
+            f"/api/submissions/{created['submission_id']}/rejudge"
+        )
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["code"] == status.HTTP_409_CONFLICT
+    assert started_submission_ids == [created["submission_id"]]
+
+
+def test_concurrent_rejudge_only_starts_one_task(monkeypatch) -> None:
+    with TestClient(app) as client:
+        register_login(client)
+        problem_id = create_problem(client)
+        created = submit(client, problem_id, "print(int(input()) * 2)")
+        wait_for_result(client, created["submission_id"])
+
+        started_submission_ids: list[str] = []
+        monkeypatch.setattr(
+            submission_service,
+            "start_judge_task",
+            started_submission_ids.append,
+        )
+
+        async def call_rejudge() -> str | int:
+            try:
+                result = await submission_service.rejudge_submission(
+                    created["submission_id"]
+                )
+                return result.status.value
+            except AppError as exc:
+                return exc.status_code
+
+        async def rejudge_twice() -> list[str | int]:
+            return await asyncio.gather(call_rejudge(), call_rejudge())
+
+        results = asyncio.run(rejudge_twice())
+
+    assert results.count(SubmissionStatus.PENDING.value) == 1
+    assert results.count(status.HTTP_409_CONFLICT) == 1
+    assert started_submission_ids == [created["submission_id"]]
+
+
+def test_rejudge_updates_resolve_count_and_replaces_logs() -> None:
+    with TestClient(app) as client:
+        user = register_login(client)
+        problem_id = create_problem(client, testcase_count=2)
+        created = submit(client, problem_id, "print(int(input()) * 2)")
+        wait_for_result(client, created["submission_id"])
+        client.post("/api/auth/logout")
+        login_admin(client)
+
+        with sqlite3.connect(DATABASE_PATH) as db:
+            db.execute(
+                "UPDATE submissions SET source_code = 'print(0)' WHERE id = ?",
+                (created["submission_id"],),
+            )
+            db.commit()
+
+        first_rejudge = client.put(
+            f"/api/submissions/{created['submission_id']}/rejudge"
+        )
+        wrong_result = wait_for_result(client, created["submission_id"])
+        after_wrong = client.get(f"/api/users/{user['user_id']}").json()["data"]
+
+        with sqlite3.connect(DATABASE_PATH) as db:
+            wrong_logs = db.execute(
+                "SELECT result FROM judge_logs WHERE submission_id = ? ORDER BY id",
+                (created["submission_id"],),
+            ).fetchall()
+            db.execute(
+                """
+                UPDATE submissions
+                SET source_code = 'print(int(input()) * 2)'
+                WHERE id = ?
+                """,
+                (created["submission_id"],),
+            )
+            db.commit()
+
+        second_rejudge = client.put(
+            f"/api/submissions/{created['submission_id']}/rejudge"
+        )
+        accepted_result = wait_for_result(client, created["submission_id"])
+        after_accepted = client.get(f"/api/users/{user['user_id']}").json()["data"]
+
+        with sqlite3.connect(DATABASE_PATH) as db:
+            accepted_logs = db.execute(
+                "SELECT result FROM judge_logs WHERE submission_id = ? ORDER BY id",
+                (created["submission_id"],),
+            ).fetchall()
+
+    assert first_rejudge.status_code == status.HTTP_200_OK
+    assert wrong_result["score"] == 0
+    assert after_wrong["resolve_count"] == 0
+    assert wrong_logs == [("WA",), ("WA",)]
+    assert second_rejudge.status_code == status.HTTP_200_OK
+    assert accepted_result["score"] == accepted_result["counts"] == 20
+    assert after_accepted["resolve_count"] == 1
+    assert accepted_logs == [("AC",), ("AC",)]
+
+
+def test_rejudge_system_error_revokes_sole_accepted_problem(
+    monkeypatch,
+) -> None:
+    with TestClient(app) as client:
+        user = register_login(client)
+        problem_id = create_problem(client)
+        created = submit(client, problem_id, "print(int(input()) * 2)")
+        wait_for_result(client, created["submission_id"])
+        client.post("/api/auth/logout")
+        login_admin(client)
+
+        async def fail_evaluation(*args, **kwargs):
+            raise RuntimeError("forced judge failure")
+
+        monkeypatch.setattr(
+            submission_service,
+            "evaluate_language",
+            fail_evaluation,
+        )
+        response = client.put(
+            f"/api/submissions/{created['submission_id']}/rejudge"
+        )
+        failed_result = wait_for_result(client, created["submission_id"])
+        user_data = client.get(f"/api/users/{user['user_id']}").json()["data"]
+
+    with sqlite3.connect(DATABASE_PATH) as db:
+        stored = db.execute(
+            "SELECT result, score, counts FROM submissions WHERE id = ?",
+            (created["submission_id"],),
+        ).fetchone()
+
+    assert response.status_code == status.HTTP_200_OK
+    assert failed_result["status"] == SubmissionStatus.ERROR.value
+    assert failed_result["error_info"] == "judge internal error"
+    assert user_data["resolve_count"] == 0
+    assert stored == (None, 0, 0)
+
+
+def test_rejudge_system_error_keeps_count_when_another_submission_is_ac(
+    monkeypatch,
+) -> None:
+    with TestClient(app) as client:
+        user = register_login(client)
+        problem_id = create_problem(client)
+        first = submit(client, problem_id, "print(int(input()) * 2)")
+        second = submit(client, problem_id, "print(int(input()) * 2)")
+        wait_for_result(client, first["submission_id"])
+        wait_for_result(client, second["submission_id"])
+        client.post("/api/auth/logout")
+        login_admin(client)
+
+        async def fail_evaluation(*args, **kwargs):
+            raise RuntimeError("forced judge failure")
+
+        monkeypatch.setattr(
+            submission_service,
+            "evaluate_language",
+            fail_evaluation,
+        )
+        client.put(f"/api/submissions/{first['submission_id']}/rejudge")
+        failed_result = wait_for_result(client, first["submission_id"])
+        user_data = client.get(f"/api/users/{user['user_id']}").json()["data"]
+
+    assert failed_result["status"] == SubmissionStatus.ERROR.value
+    assert user_data["resolve_count"] == 1

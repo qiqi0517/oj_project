@@ -235,12 +235,18 @@ async def list_submission_publics(
 
 
 async def rejudge_submission(submission_id: str) -> SubmissionCreateResponse:
-    if await submission_repository.get_submission(submission_id) is None:
-        raise AppError(status.HTTP_404_NOT_FOUND, "submission not found")
-    await submission_repository.set_submission_pending(
+    started = await submission_repository.set_submission_pending(
         submission_id,
         to_iso8601(utc_now()),
     )
+    if not started:
+        submission = await submission_repository.get_submission(submission_id)
+        if submission is None:
+            raise AppError(status.HTTP_404_NOT_FOUND, "submission not found")
+        raise AppError(
+            status.HTTP_409_CONFLICT,
+            "submission is still pending",
+        )
     start_judge_task(submission_id)
     return SubmissionCreateResponse.model_validate(
         {

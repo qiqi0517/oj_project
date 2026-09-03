@@ -188,21 +188,27 @@ async def set_submission_pending(
     started_at: str,
 ) -> bool:
     async with get_db_connection() as db:
-        cursor = await db.execute(
-            """
-            UPDATE submissions
-            SET status = 'pending', score = 0, counts = 0,
-                total_time = NULL, compile_info = NULL, run_info = NULL,
-                error_info = NULL, started_at = ?, finished_at = NULL
-            WHERE id = ?
-            """,
-            (started_at, submission_id),
-        )
-        await db.execute(
-            "DELETE FROM judge_logs WHERE submission_id = ?",
-            (submission_id,),
-        )
-        await db.commit()
+        try:
+            await db.execute("BEGIN")
+            cursor = await db.execute(
+                """
+                UPDATE submissions
+                SET status = 'pending', score = 0, counts = 0,
+                    total_time = NULL, compile_info = NULL, run_info = NULL,
+                    error_info = NULL, started_at = ?, finished_at = NULL
+                WHERE id = ? AND status IN ('success', 'error')
+                """,
+                (started_at, submission_id),
+            )
+            if cursor.rowcount > 0:
+                await db.execute(
+                    "DELETE FROM judge_logs WHERE submission_id = ?",
+                    (submission_id,),
+                )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
     return cursor.rowcount > 0
 
 
@@ -331,12 +337,56 @@ async def mark_submission_error(
     finished_at: str,
 ) -> None:
     async with get_db_connection() as db:
-        await db.execute(
-            """
-            UPDATE submissions
-            SET status = 'error', error_info = ?, finished_at = ?
-            WHERE id = ?
-            """,
-            (error_info, finished_at, submission_id),
-        )
-        await db.commit()
+        try:
+            await db.execute("BEGIN")
+            cursor = await db.execute(
+                """
+                SELECT user_id, problem_id, result
+                FROM submissions
+                WHERE id = ?
+                """,
+                (submission_id,),
+            )
+            previous_row = await cursor.fetchone()
+            if previous_row is None:
+                await db.rollback()
+                return
+
+            await db.execute(
+                """
+                UPDATE submissions
+                SET status = 'error', result = NULL, score = 0, counts = 0,
+                    total_time = NULL, compile_info = NULL, run_info = NULL,
+                    error_info = ?, finished_at = ?
+                WHERE id = ?
+                """,
+                (error_info, finished_at, submission_id),
+            )
+
+            if previous_row["result"] == "AC":
+                cursor = await db.execute(
+                    """
+                    SELECT COUNT(*) FROM submissions
+                    WHERE user_id = ? AND problem_id = ?
+                        AND result = 'AC' AND id != ?
+                    """,
+                    (
+                        previous_row["user_id"],
+                        previous_row["problem_id"],
+                        submission_id,
+                    ),
+                )
+                other_accepted = int((await cursor.fetchone())[0])  # type: ignore
+                if other_accepted == 0:
+                    await db.execute(
+                        """
+                        UPDATE users
+                        SET resolve_count = MAX(resolve_count - 1, 0)
+                        WHERE id = ?
+                        """,
+                        (previous_row["user_id"],),
+                    )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
