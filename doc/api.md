@@ -1281,7 +1281,7 @@ view_logs
 页面响应示例中出现：
 
 ```text
-view_log
+view_logs
 ```
 
 实现时应以课程自动测试/最新页面要求为准。
@@ -1304,7 +1304,7 @@ view_log
     {
       "user_id": "test",
       "problem_id": "sum_3_numbers",
-      "action": "view_log",
+      "action": "view_logs",
       "time": "2024-06-01",
       "status": "403"
     }

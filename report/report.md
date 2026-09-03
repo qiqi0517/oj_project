@@ -74,12 +74,16 @@ SQLite 主要数据表包括：
 
 Runner 同时监控：
 
-- `time_limit`：超时后终止子进程并产生 TLE
-- `memory_limit`：使用 psutil 读取进程及子进程 RSS，超限后产生 MLE
+- `time_limit`：超时后终止完整进程树并产生 TLE
+- `memory_limit`：使用 psutil 累计完整进程树 RSS，超限后终止整棵树并产生 MLE
 - exit code：非零退出码产生 RE
 - UTF-8：无法解码的输出产生 RE
 - C++ 编译：g++ 编译失败产生 CE
 - Judge 内部异常：产生 UNK
+
+Runner 会持续保存已经观察到的子进程对象。超时、内存超限、正常退出和异常退出最终都会进入同一个清理路径；Linux 使用独立进程组补充终止，Windows 额外根据父 PID 关系发现后台子进程。测试覆盖父进程超时、子进程分配内存、持续内存增长和父进程退出后遗留后台进程。
+
+当前实现仍不是安全沙箱：设置工作目录不能阻止用户代码访问宿主机其他文件或网络。最终部署方案应在 Linux 中使用低权限专用 Judge 账户，在禁用网络的容器中运行代码，只读挂载系统目录，仅以读写方式挂载单次评测临时目录，并通过 cgroup 限制内存、CPU 和进程数。在该方案实际部署前，系统不得直接面向不可信公网用户。
 
 输出比较会统一换行、删除每行末尾空格和文件末尾空行，但保留行首及行内空格。
 
@@ -133,7 +137,7 @@ Streamlit 使用 `requests.Session` 保存后端 Cookie，并集中封装 REST A
 在 `Miniconda/env/oj_project`、Python 3.12.14 环境运行：
 
 ```text
-49 passed
+70 passed
 0 skipped
 ```
 
@@ -161,7 +165,7 @@ Streamlit 使用 `requests.Session` 保存后端 Cookie，并集中封装 REST A
 
 ### 7.2 Windows 子进程差异
 
-Windows 标准输出使用 CRLF，Runner 保留原始输出，由 Comparator 统一换行。C++ 可执行文件在 Windows 使用 `.exe`，Linux 使用无扩展名文件。
+Windows 标准输出使用 CRLF，Runner 保留原始输出，由 Comparator 统一换行。C++ 可执行文件在 Windows 使用 `.exe`，Linux 使用无扩展名文件。Windows 当前使用 psutil 跟踪进程树，并在退出时根据父 PID 补充发现孤立子进程；它不等价于 Windows Job Object 或容器隔离。
 
 ### 7.3 快速内存分配难以采样
 
