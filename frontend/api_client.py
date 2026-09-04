@@ -74,14 +74,18 @@ def register_user(
     password: str,
 ) -> tuple[int | None, ApiResponse | None]:
     """POST /api/users/"""
-    ...
+    return request_api(
+        "POST",
+        "/api/users/",
+        json={"username": username, "password": password},
+    )
 
 
 def get_user(
     user_id: str,
 ) -> tuple[int | None, ApiResponse | None]:
     """GET /api/users/{user_id}"""
-    ...
+    return request_api("GET", f"/api/users/{user_id}")
 
 
 def list_users(
@@ -90,7 +94,12 @@ def list_users(
     page_size: int | None = None,
 ) -> tuple[int | None, ApiResponse | None]:
     """GET /api/users/"""
-    ...
+    params = {
+        key: value
+        for key, value in {"page": page, "page_size": page_size}.items()
+        if value is not None
+    }
+    return request_api("GET", "/api/users/", params=params or None)
 
 
 def update_user_role(
@@ -98,7 +107,11 @@ def update_user_role(
     role: str,
 ) -> tuple[int | None, ApiResponse | None]:
     """PUT /api/users/{user_id}/role"""
-    ...
+    return request_api(
+        "PUT",
+        f"/api/users/{user_id}/role",
+        json={"role": role},
+    )
 
 
 # 题目接口

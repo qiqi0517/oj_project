@@ -2,6 +2,11 @@ from typing import Any
 
 import streamlit as st
 
+if __package__:
+    from .session import is_admin, is_logged_in
+else:
+    from session import is_admin, is_logged_in
+
 
 _STATUS_MESSAGES = {
     400: "请求参数有误，请检查填写内容。",
@@ -112,7 +117,10 @@ def require_login() -> bool:
     已登录返回 True。
     注意：只是前端体验控制，不能替代后端权限校验。
     """
-    ...
+    if is_logged_in():
+        return True
+    st.warning("请先登录后再访问此页面。")
+    return False
 
 
 def require_admin() -> bool:
@@ -121,12 +129,26 @@ def require_admin() -> bool:
     管理员返回 True。
     注意：真正权限仍以后端响应为准。
     """
-    ...
+    if not require_login():
+        return False
+    if is_admin():
+        return True
+    st.error("此页面仅限管理员访问。")
+    return False
 
 
 def render_user_summary(user: dict[str, Any]) -> None:
     """统一展示用户基本信息。"""
-    ...
+    role_names = {"user": "普通用户", "admin": "管理员", "banned": "已禁用"}
+    role = str(user.get("role", "unknown"))
+
+    st.subheader(str(user.get("username", "未知用户")))
+    st.caption(f"用户 ID：{user.get('user_id', '—')}")
+    first, second, third = st.columns(3)
+    first.metric("角色", role_names.get(role, role))
+    second.metric("提交次数", user.get("submit_count", 0))
+    third.metric("通过题目数", user.get("resolve_count", 0))
+    st.write(f"加入时间：{user.get('join_time', '—')}")
 
 
 def render_problem_summary(problem: dict[str, Any]) -> None:

@@ -3,11 +3,11 @@ from typing import Any
 import streamlit as st
 
 if __package__ == "frontend.pages":
-    from ..api_client import login, logout
+    from ..api_client import login, logout, register_user
     from ..session import clear_current_user, is_logged_in, set_current_user
     from ..ui import show_api_message
 else:
-    from api_client import login, logout
+    from api_client import login, logout, register_user
     from session import clear_current_user, is_logged_in, set_current_user
     from ui import show_api_message
 
@@ -80,7 +80,41 @@ def render_login_form() -> None:
 
 def render_register_form() -> None:
     """注册表单。"""
-    st.info("用户注册将在阶段 3 接入。")
+    if is_logged_in():
+        st.info("当前已有用户登录。如需注册新账号，请先退出登录。")
+        return
+
+    with st.form("register_form"):
+        username = st.text_input("用户名", autocomplete="username")
+        password = st.text_input(
+            "密码",
+            type="password",
+            autocomplete="new-password",
+        )
+        password_confirmation = st.text_input(
+            "确认密码",
+            type="password",
+            autocomplete="new-password",
+        )
+        submitted = st.form_submit_button("注册", use_container_width=True)
+
+    if not submitted:
+        return
+
+    normalized_username = (username or "").strip()
+    if not 3 <= len(normalized_username) <= 40:
+        st.error("用户名长度必须为 3～40 个字符。")
+        return
+    if not password or len(password) < 6:
+        st.error("密码长度不能少于 6 位。")
+        return
+    if password != password_confirmation:
+        st.error("两次输入的密码不一致。")
+        return
+
+    status_code, body = register_user(normalized_username, password)
+    if show_api_message(status_code, body, success_message="注册成功，请登录。"):
+        st.info("注册不会自动登录，请使用新账号登录。")
 
 
 def render_logout_button() -> None:

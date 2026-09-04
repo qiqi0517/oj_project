@@ -9,7 +9,7 @@ from frontend import api_client
 from frontend import app as frontend_app
 from frontend import session as frontend_session
 from frontend import ui
-from frontend.pages import auth
+from frontend.pages import auth, profile, users
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -143,6 +143,36 @@ def test_login_and_logout_use_documented_api_contract(monkeypatch: Any) -> None:
     ]
 
 
+def test_user_helpers_use_documented_api_contract(monkeypatch: Any) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_request_api(
+        method: str,
+        path: str,
+        **kwargs: Any,
+    ) -> tuple[int, dict[str, Any]]:
+        calls.append((method, path, kwargs))
+        return 200, {"code": 200, "msg": "success", "data": None}
+
+    monkeypatch.setattr(api_client, "request_api", fake_request_api)
+
+    api_client.register_user("alice", "secret123")
+    api_client.get_user("u1")
+    api_client.list_users(page=2, page_size=10)
+    api_client.update_user_role("u1", "banned")
+
+    assert calls == [
+        (
+            "POST",
+            "/api/users/",
+            {"json": {"username": "alice", "password": "secret123"}},
+        ),
+        ("GET", "/api/users/u1", {}),
+        ("GET", "/api/users/", {"params": {"page": 2, "page_size": 10}}),
+        ("PUT", "/api/users/u1/role", {"json": {"role": "banned"}}),
+    ]
+
+
 def test_login_response_requires_complete_user_identity() -> None:
     body = {
         "code": 200,
@@ -216,6 +246,90 @@ def test_show_api_message_rejects_invalid_response_contract(monkeypatch: Any) ->
     ]
 
 
+def test_permission_guards_follow_current_session(monkeypatch: Any) -> None:
+    warnings: list[str] = []
+    errors: list[str] = []
+    monkeypatch.setattr(ui.st, "warning", warnings.append)
+    monkeypatch.setattr(ui.st, "error", errors.append)
+
+    monkeypatch.setattr(ui, "is_logged_in", lambda: False)
+    assert not ui.require_login()
+
+    monkeypatch.setattr(ui, "is_logged_in", lambda: True)
+    monkeypatch.setattr(ui, "is_admin", lambda: False)
+    assert not ui.require_admin()
+
+    monkeypatch.setattr(ui, "is_admin", lambda: True)
+    assert ui.require_admin()
+    assert warnings == ["请先登录后再访问此页面。"]
+    assert errors == ["此页面仅限管理员访问。"]
+
+
+def test_profile_refreshes_session_from_backend(monkeypatch: Any) -> None:
+    latest_user = {
+        "user_id": "u1",
+        "username": "alice",
+        "role": "admin",
+        "join_time": "2026-09-04",
+        "submit_count": 4,
+        "resolve_count": 2,
+    }
+    saved_users: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        profile,
+        "get_current_user",
+        lambda: {"user_id": "u1", "username": "alice", "role": "user"},
+    )
+    monkeypatch.setattr(
+        profile,
+        "get_user",
+        lambda user_id: (
+            200,
+            {"code": 200, "msg": "success", "data": latest_user},
+        ),
+    )
+    monkeypatch.setattr(profile, "set_current_user", saved_users.append)
+
+    assert profile.load_current_user_profile() == latest_user
+    assert saved_users == [latest_user]
+
+
+def test_profile_page_contains_logout_action(monkeypatch: Any) -> None:
+    rendered: list[str] = []
+    monkeypatch.setattr(profile, "require_login", lambda: True)
+    monkeypatch.setattr(profile, "load_current_user_profile", lambda: {"user_id": "u1"})
+    monkeypatch.setattr(profile, "render_profile", lambda _user: rendered.append("profile"))
+    monkeypatch.setattr(profile.st, "divider", lambda: None)
+    monkeypatch.setattr(profile.st, "subheader", lambda _message: None)
+    monkeypatch.setattr(
+        profile,
+        "render_logout_button",
+        lambda: rendered.append("logout"),
+    )
+
+    profile.render_page()
+
+    assert rendered == ["profile", "logout"]
+
+
+def test_user_list_loader_validates_documented_response(monkeypatch: Any) -> None:
+    listed_users = [{"user_id": "u1", "username": "alice", "role": "user"}]
+    monkeypatch.setattr(
+        users,
+        "list_users",
+        lambda **_kwargs: (
+            200,
+            {
+                "code": 200,
+                "msg": "success",
+                "data": {"total": 1, "users": listed_users},
+            },
+        ),
+    )
+
+    assert users.load_users(1, 10) == (1, listed_users)
+
+
 class StubSidebar:
     def __init__(self) -> None:
         self.options: list[str] = []
@@ -225,7 +339,7 @@ class StubSidebar:
         return options[0]
 
 
-def test_navigation_allows_all_users_to_edit_problems(monkeypatch: Any) -> None:
+def test_navigation_merges_problem_editor_and_profile_logout(monkeypatch: Any) -> None:
     sidebar = StubSidebar()
     monkeypatch.setattr(frontend_app.st, "sidebar", sidebar)
     monkeypatch.setattr(frontend_app.st, "header", lambda _message: None)
@@ -236,17 +350,18 @@ def test_navigation_allows_all_users_to_edit_problems(monkeypatch: Any) -> None:
         lambda: {"username": "alice", "role": "user"},
     )
     monkeypatch.setattr(frontend_app, "is_admin", lambda: False)
+    monkeypatch.setattr(frontend_app.profile, "render_page", lambda: None)
 
     frontend_app.build_navigation()
 
     assert sidebar.options == [
         "我的信息",
         "题目",
-        "新增 / 编辑题目",
         "提交代码",
         "提交记录",
-        "退出登录",
     ]
+    assert "新增 / 编辑题目" not in sidebar.options
+    assert "退出登录" not in sidebar.options
 
 
 def test_navigation_keeps_user_management_admin_only(monkeypatch: Any) -> None:
@@ -260,11 +375,13 @@ def test_navigation_keeps_user_management_admin_only(monkeypatch: Any) -> None:
         lambda: {"username": "admin", "role": "admin"},
     )
     monkeypatch.setattr(frontend_app, "is_admin", lambda: True)
+    monkeypatch.setattr(frontend_app.profile, "render_page", lambda: None)
 
     frontend_app.build_navigation()
 
     assert "用户管理" in sidebar.options
-    assert sidebar.options.count("新增 / 编辑题目") == 1
+    assert "新增 / 编辑题目" not in sidebar.options
+    assert "退出登录" not in sidebar.options
 
 
 def test_navigation_renders_login_form_for_guests(monkeypatch: Any) -> None:
