@@ -9,6 +9,7 @@ from frontend import api_client
 from frontend import app as frontend_app
 from frontend import session as frontend_session
 from frontend import ui
+from frontend.pages import auth
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +70,9 @@ def test_session_helpers_manage_current_values(monkeypatch: Any) -> None:
     frontend_session.clear_current_user()
     assert not frontend_session.is_logged_in()
     assert not frontend_session.is_admin()
+    assert frontend_session.get_selected_problem() is None
+    assert frontend_session.get_selected_submission() is None
+    assert not frontend_session.get_api_session().cookies
 
 
 def test_request_api_uses_shared_session(monkeypatch: Any) -> None:
@@ -111,6 +115,47 @@ def test_request_api_handles_network_and_json_errors(monkeypatch: Any) -> None:
         lambda: invalid_json_session,
     )
     assert api_client.request_api("GET", "/api/health") == (502, None)
+
+
+def test_login_and_logout_use_documented_api_contract(monkeypatch: Any) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_request_api(
+        method: str,
+        path: str,
+        **kwargs: Any,
+    ) -> tuple[int, dict[str, Any]]:
+        calls.append((method, path, kwargs))
+        return 200, {"code": 200, "msg": "success", "data": None}
+
+    monkeypatch.setattr(api_client, "request_api", fake_request_api)
+
+    api_client.login("alice", "secret123")
+    api_client.logout()
+
+    assert calls == [
+        (
+            "POST",
+            "/api/auth/login",
+            {"json": {"username": "alice", "password": "secret123"}},
+        ),
+        ("POST", "/api/auth/logout", {}),
+    ]
+
+
+def test_login_response_requires_complete_user_identity() -> None:
+    body = {
+        "code": 200,
+        "msg": "login success",
+        "data": {"user_id": "u1", "username": "alice", "role": "user"},
+    }
+
+    assert auth._login_user_from_response(200, body) == body["data"]
+    assert auth._login_user_from_response(401, body) is None
+    assert auth._login_user_from_response(
+        200,
+        {"code": 200, "msg": "login success", "data": {"username": "alice"}},
+    ) is None
 
 
 def test_show_api_message_reports_success_and_failures(monkeypatch: Any) -> None:
@@ -220,6 +265,25 @@ def test_navigation_keeps_user_management_admin_only(monkeypatch: Any) -> None:
 
     assert "用户管理" in sidebar.options
     assert sidebar.options.count("新增 / 编辑题目") == 1
+
+
+def test_navigation_renders_login_form_for_guests(monkeypatch: Any) -> None:
+    sidebar = StubSidebar()
+    rendered: list[str] = []
+    monkeypatch.setattr(frontend_app.st, "sidebar", sidebar)
+    monkeypatch.setattr(frontend_app.st, "header", lambda _message: None)
+    monkeypatch.setattr(frontend_app.st, "info", lambda _message: None)
+    monkeypatch.setattr(frontend_app, "get_current_user", lambda: None)
+    monkeypatch.setattr(
+        frontend_app.auth,
+        "render_login_form",
+        lambda: rendered.append("login"),
+    )
+
+    frontend_app.build_navigation()
+
+    assert sidebar.options == ["登录", "注册"]
+    assert rendered == ["login"]
 
 
 def test_frontend_modules_import_from_streamlit_script_directory() -> None:

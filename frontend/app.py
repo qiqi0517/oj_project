@@ -2,9 +2,11 @@ import streamlit as st
 
 if __package__:
     from .config import APP_TITLE
+    from .pages import auth
     from .session import get_current_user, init_session_state, is_admin
 else:
     from config import APP_TITLE
+    from pages import auth
     from session import get_current_user, init_session_state, is_admin
 
 
@@ -37,7 +39,14 @@ def build_navigation() -> None:
 
     selected_page = st.sidebar.radio("导航", pages)
     st.header(selected_page)
-    st.info("公共基础已就绪；该页面的业务功能将在后续阶段接入。")
+    if selected_page == "登录":
+        auth.render_login_form()
+    elif selected_page == "注册":
+        auth.render_register_form()
+    elif selected_page == "退出登录":
+        auth.render_logout_button()
+    else:
+        st.info("该页面的业务功能将在后续阶段接入。")
 
 
 def render_sidebar_user() -> None:
@@ -58,6 +67,9 @@ def main() -> None:
     """前端入口。"""
     configure_page()
     init_session_state()
+    notice = auth.pop_auth_notice()
+    if notice is not None:
+        st.success(notice)
     render_sidebar_user()
     build_navigation()
 

@@ -57,12 +57,16 @@ def login(
     password: str,
 ) -> tuple[int | None, ApiResponse | None]:
     """POST /api/auth/login"""
-    ...
+    return request_api(
+        "POST",
+        "/api/auth/login",
+        json={"username": username, "password": password},
+    )
 
 
 def logout() -> tuple[int | None, ApiResponse | None]:
     """POST /api/auth/logout"""
-    ...
+    return request_api("POST", "/api/auth/logout")
 
 
 def register_user(

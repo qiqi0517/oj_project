@@ -44,6 +44,9 @@ def clear_current_user() -> None:
     """退出登录后清空当前用户信息。"""
     init_session_state()
     st.session_state[_CURRENT_USER_KEY] = None
+    st.session_state[_SELECTED_PROBLEM_KEY] = None
+    st.session_state[_SELECTED_SUBMISSION_KEY] = None
+    get_api_session().cookies.clear()
 
 
 def is_logged_in() -> bool:
