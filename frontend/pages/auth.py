@@ -47,9 +47,9 @@ def render_login_form() -> None:
         return
 
     with st.form("login_form"):
-        username = st.text_input("用户名", autocomplete="username")
+        username = st.text_input("username", autocomplete="username")
         password = st.text_input(
-            "密码",
+            "password",
             type="password",
             autocomplete="current-password",
         )
@@ -85,14 +85,14 @@ def render_register_form() -> None:
         return
 
     with st.form("register_form"):
-        username = st.text_input("用户名", autocomplete="username")
+        username = st.text_input("username", autocomplete="username")
         password = st.text_input(
-            "密码",
+            "password",
             type="password",
             autocomplete="new-password",
         )
         password_confirmation = st.text_input(
-            "确认密码",
+            "password_confirmation",
             type="password",
             autocomplete="new-password",
         )

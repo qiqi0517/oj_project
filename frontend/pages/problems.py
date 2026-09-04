@@ -44,7 +44,7 @@ def render_problem_list(problems: list[dict[str, Any]]) -> None:
         return
 
     rows = [
-        {"题目 ID": problem.get("id", ""), "标题": problem.get("title", "")}
+        {"id": problem.get("id", ""), "title": problem.get("title", "")}
         for problem in problems
     ]
     st.dataframe(rows, use_container_width=True, hide_index=True)
@@ -60,8 +60,8 @@ def render_problem_list(problems: list[dict[str, Any]]) -> None:
         f"{problem['id']} · {problem.get('title', '未命名题目')}": problem["id"]
         for problem in selectable
     }
-    selected_label = st.selectbox("选择要查看的题目", list(labels))
-    if st.button("查看题目详情", type="primary", use_container_width=True):
+    selected_label = st.selectbox("id", list(labels))
+    if st.button("查询题目详情", type="primary", use_container_width=True):
         _open_view("detail", labels[selected_label])
 
 
@@ -80,7 +80,7 @@ def load_problem_detail(problem_id: str) -> dict[str, Any] | None:
 
 
 def _render_samples(samples: Any) -> None:
-    st.markdown("### 样例")
+    st.markdown("### samples")
     if not isinstance(samples, list) or not samples:
         st.info("该题目没有可显示的样例。")
         return
@@ -88,32 +88,32 @@ def _render_samples(samples: Any) -> None:
     for index, sample in enumerate(samples, start=1):
         if not isinstance(sample, dict):
             continue
-        st.markdown(f"**样例 {index}**")
+        st.markdown(f"**sample {index}**")
         input_column, output_column = st.columns(2)
         with input_column:
-            st.caption("输入")
+            st.caption("input")
             st.code(str(sample.get("input", "")), language=None)
         with output_column:
-            st.caption("输出")
+            st.caption("output")
             st.code(str(sample.get("output", "")), language=None)
 
 
 def render_problem_detail(problem: dict[str, Any]) -> None:
     """展示完整题面。"""
     render_problem_summary(problem)
-    st.markdown("### 题目描述")
+    st.markdown("### description")
     st.markdown(str(problem.get("description", "")))
-    st.markdown("### 输入说明")
+    st.markdown("### input_description")
     st.markdown(str(problem.get("input_description", "")))
-    st.markdown("### 输出说明")
+    st.markdown("### output_description")
     st.markdown(str(problem.get("output_description", "")))
     _render_samples(problem.get("samples"))
-    st.markdown("### 数据范围与约束")
+    st.markdown("### constraints")
     st.markdown(str(problem.get("constraints", "")))
 
     hint = problem.get("hint")
     if hint:
-        st.markdown("### 提示")
+        st.markdown("### hint")
         st.markdown(str(hint))
     source = problem.get("source")
     author = problem.get("author")
@@ -122,8 +122,8 @@ def render_problem_detail(problem: dict[str, Any]) -> None:
             " · ".join(
                 part
                 for part in (
-                    f"来源：{source}" if source else "",
-                    f"作者：{author}" if author else "",
+                    f"source: {source}" if source else "",
+                    f"author: {author}" if author else "",
                 )
                 if part
             )
@@ -188,8 +188,19 @@ def _render_detail_page(problem_id: str) -> None:
 def _render_submit_entry(problem_id: str) -> None:
     if st.button("← 返回题目详情"):
         _open_view("detail", problem_id)
-    st.subheader(f"提交代码 · {problem_id}")
-    st.info("提交入口已关联当前题目；代码与语言表单将在阶段 5 接入。")
+    if __package__ == "frontend.pages":
+        from . import submit
+    else:
+        from pages import submit
+    submit.render_page()
+
+
+def _render_submission_detail() -> None:
+    if __package__ == "frontend.pages":
+        from . import submission_detail
+    else:
+        from pages import submission_detail
+    submission_detail.render_page()
 
 
 def render_page() -> None:
@@ -217,6 +228,8 @@ def render_page() -> None:
         _render_detail_page(problem_id)
     elif view == "submit" and problem_id:
         _render_submit_entry(problem_id)
+    elif view == "submission_detail":
+        _render_submission_detail()
     else:
         if view != "list":
             st.session_state[_VIEW_KEY] = "list"

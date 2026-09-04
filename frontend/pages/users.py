@@ -6,15 +6,16 @@ import streamlit as st
 if __package__ == "frontend.pages":
     from ..api_client import list_users, update_user_role
     from ..session import get_current_user, set_current_user
-    from ..ui import require_admin, show_api_message
+    from ..ui import render_user_summary, require_admin, show_api_message
 else:
     from api_client import list_users, update_user_role
     from session import get_current_user, set_current_user
-    from ui import require_admin, show_api_message
+    from ui import render_user_summary, require_admin, show_api_message
 
 
 _PAGE_KEY = "users_page"
 _PAGE_SIZE_KEY = "users_page_size"
+_SELECTED_USER_KEY = "selected_user"
 _ROLE_NAMES = {"user": "普通用户", "admin": "管理员", "banned": "已禁用"}
 
 
@@ -51,12 +52,12 @@ def render_user_table(users: list[dict[str, Any]]) -> None:
 
     rows = [
         {
-            "用户 ID": user.get("user_id", ""),
-            "用户名": user.get("username", ""),
-            "角色": _ROLE_NAMES.get(str(user.get("role")), user.get("role", "")),
-            "加入时间": user.get("join_time", ""),
-            "提交次数": user.get("submit_count", 0),
-            "通过题目数": user.get("resolve_count", 0),
+            "user_id": user.get("user_id", ""),
+            "username": user.get("username", ""),
+            "role": user.get("role", ""),
+            "join_time": user.get("join_time", ""),
+            "submit_count": user.get("submit_count", 0),
+            "resolve_count": user.get("resolve_count", 0),
         }
         for user in users
     ]
@@ -72,17 +73,21 @@ def render_role_editor(users: list[dict[str, Any]]) -> None:
         f"{user.get('username', '未知用户')}（{user.get('user_id', '')}）": user
         for user in users
     }
-    selected_label = st.selectbox("选择用户", list(user_by_label))
+    selected_label = st.selectbox(
+        "user_id",
+        list(user_by_label),
+        key="role_editor_user_id",
+    )
     selected_user = user_by_label[selected_label]
     current_role = str(selected_user.get("role", "user"))
     roles = ["user", "admin", "banned"]
 
     with st.form("role_editor"):
         role = st.selectbox(
-            "新角色",
+            "role",
             roles,
             index=roles.index(current_role) if current_role in roles else 0,
-            format_func=lambda value: _ROLE_NAMES[value],
+            format_func=lambda value: f"{value} · {_ROLE_NAMES[value]}",
         )
         submitted = st.form_submit_button("更新角色", type="primary")
 
@@ -91,7 +96,7 @@ def render_role_editor(users: list[dict[str, Any]]) -> None:
 
     user_id = selected_user.get("user_id")
     if not isinstance(user_id, str) or not user_id:
-        st.error("所选用户缺少有效的用户 ID。")
+        st.error("所选用户缺少有效的 user_id。")
         return
     if role == current_role:
         st.info("用户角色没有变化。")
@@ -115,7 +120,7 @@ def render_pagination(total: int) -> tuple[int | None, int | None]:
         st.session_state[_PAGE_SIZE_KEY] = 10
     page_size = int(
         st.selectbox(
-            "每页数量",
+            "page_size",
             [5, 10, 20, 50],
             key=_PAGE_SIZE_KEY,
         )
@@ -125,16 +130,36 @@ def render_pagination(total: int) -> tuple[int | None, int | None]:
     current_page = int(st.session_state.get(_PAGE_KEY, 1))
     st.session_state[_PAGE_KEY] = min(max(1, current_page), max_page)
     page = int(
-        st.number_input(
-            "页码",
-            min_value=1,
-            max_value=max_page,
-            step=1,
+        st.selectbox(
+            "page",
+            list(range(1, max_page + 1)),
+            index=st.session_state[_PAGE_KEY] - 1,
             key=_PAGE_KEY,
         )
     )
     st.caption(f"共 {total} 位用户，第 {page} / {max_page} 页")
     return page, page_size
+
+
+def render_user_selector(users: list[dict[str, Any]]) -> None:
+    """选择列表条目并查看用户字段。"""
+    if not users:
+        return
+    user_by_label = {
+        f"{user.get('username', 'unknown')} · {user.get('user_id', '')}": user
+        for user in users
+    }
+    selected_label = st.selectbox(
+        "user_id",
+        list(user_by_label),
+        key="user_detail_selector",
+    )
+    if st.button("查询用户信息", use_container_width=True):
+        st.session_state[_SELECTED_USER_KEY] = user_by_label[selected_label]
+
+    selected_user = st.session_state.get(_SELECTED_USER_KEY)
+    if isinstance(selected_user, dict):
+        render_user_summary(selected_user)
 
 
 def render_page() -> None:
@@ -150,6 +175,7 @@ def render_page() -> None:
         st.rerun()
 
     render_user_table(users)
+    render_user_selector(users)
     st.divider()
     st.subheader("修改用户角色")
     render_role_editor(users)

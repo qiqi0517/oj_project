@@ -163,7 +163,7 @@ def delete_problem(
 
 def list_languages() -> tuple[int | None, ApiResponse | None]:
     """GET /api/languages/"""
-    ...
+    return request_api("GET", "/api/languages/")
 
 
 # 提交与评测接口
@@ -174,7 +174,15 @@ def create_submission(
     code: str,
 ) -> tuple[int | None, ApiResponse | None]:
     """POST /api/submissions/"""
-    ...
+    return request_api(
+        "POST",
+        "/api/submissions/",
+        json={
+            "problem_id": problem_id,
+            "language": language,
+            "code": code,
+        },
+    )
 
 
 def list_submissions(
@@ -186,21 +194,32 @@ def list_submissions(
     page_size: int | None = None,
 ) -> tuple[int | None, ApiResponse | None]:
     """GET /api/submissions/"""
-    ...
+    params = {
+        key: value
+        for key, value in {
+            "user_id": user_id,
+            "problem_id": problem_id,
+            "status": status,
+            "page": page,
+            "page_size": page_size,
+        }.items()
+        if value is not None
+    }
+    return request_api("GET", "/api/submissions/", params=params or None)
 
 
 def get_submission(
     submission_id: str,
 ) -> tuple[int | None, ApiResponse | None]:
     """GET /api/submissions/{submission_id}"""
-    ...
+    return request_api("GET", f"/api/submissions/{submission_id}")
 
 
 def get_submission_log(
     submission_id: str,
 ) -> tuple[int | None, ApiResponse | None]:
     """GET /api/submissions/{submission_id}/log"""
-    ...
+    return request_api("GET", f"/api/submissions/{submission_id}/log")
 
 def rejudge_submission(
     submission_id: str,

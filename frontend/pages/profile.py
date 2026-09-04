@@ -22,7 +22,7 @@ def load_current_user_profile() -> dict[str, Any] | None:
 
     user_id = current_user.get("user_id")
     if not isinstance(user_id, str) or not user_id:
-        st.error("当前登录信息缺少有效的用户 ID，请重新登录。")
+        st.error("当前登录信息缺少有效的 user_id，请重新登录。")
         clear_current_user()
         return None
 

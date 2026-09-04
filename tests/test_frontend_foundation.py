@@ -5,12 +5,19 @@ from typing import Any
 
 import requests
 
-from frontend import api_client
+from frontend import api_client, ui
 from frontend import app as frontend_app
 from frontend import session as frontend_session
-from frontend import ui
-from frontend.pages import auth, problem_editor, problems, profile, users
-
+from frontend.pages import (
+    auth,
+    problem_editor,
+    problems,
+    profile,
+    submission_detail,
+    submissions,
+    submit,
+    users,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -60,6 +67,8 @@ def test_session_helpers_manage_current_values(monkeypatch: Any) -> None:
     frontend_session.set_current_user(user)
     frontend_session.set_selected_problem("p1")
     frontend_session.set_selected_submission("s1")
+    state["problem_page_view"] = "submission_detail"
+    state["submission_filters"] = {"user_id": "u1"}
 
     assert frontend_session.is_logged_in()
     assert frontend_session.is_admin()
@@ -72,6 +81,8 @@ def test_session_helpers_manage_current_values(monkeypatch: Any) -> None:
     assert not frontend_session.is_admin()
     assert frontend_session.get_selected_problem() is None
     assert frontend_session.get_selected_submission() is None
+    assert "problem_page_view" not in state
+    assert "submission_filters" not in state
     assert not frontend_session.get_api_session().cookies
 
 
@@ -225,6 +236,62 @@ def test_problem_helpers_use_documented_api_contract(monkeypatch: Any) -> None:
         ("POST", "/api/problems/", {"json": problem_data}),
         ("PUT", "/api/problems/P1", {"json": problem_data}),
         ("DELETE", "/api/problems/P1", {}),
+    ]
+
+
+def test_submission_helpers_use_documented_api_contract(monkeypatch: Any) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_request_api(
+        method: str,
+        path: str,
+        **kwargs: Any,
+    ) -> tuple[int, dict[str, Any]]:
+        calls.append((method, path, kwargs))
+        return 200, {"code": 200, "msg": "success", "data": None}
+
+    monkeypatch.setattr(api_client, "request_api", fake_request_api)
+
+    api_client.list_languages()
+    api_client.create_submission("P1", "python", "print(1)")
+    api_client.list_submissions(
+        user_id="u1",
+        problem_id="P1",
+        status="success",
+        page=2,
+        page_size=10,
+    )
+    api_client.get_submission("s1")
+    api_client.get_submission_log("s1")
+
+    assert calls == [
+        ("GET", "/api/languages/", {}),
+        (
+            "POST",
+            "/api/submissions/",
+            {
+                "json": {
+                    "problem_id": "P1",
+                    "language": "python",
+                    "code": "print(1)",
+                }
+            },
+        ),
+        (
+            "GET",
+            "/api/submissions/",
+            {
+                "params": {
+                    "user_id": "u1",
+                    "problem_id": "P1",
+                    "status": "success",
+                    "page": 2,
+                    "page_size": 10,
+                }
+            },
+        ),
+        ("GET", "/api/submissions/s1", {}),
+        ("GET", "/api/submissions/s1/log", {}),
     ]
 
 
@@ -411,12 +478,12 @@ def test_problem_form_validation_covers_required_shapes_and_limits() -> None:
         "tags": "math",
     }
     errors = problem_editor.validate_problem_form(invalid_problem)
-    assert "标题不能为空。" in errors
+    assert "title不能为空。" in errors
     assert "至少需要填写一组样例。" in errors
     assert "第 1 组测试点必须包含字符串 input 和 output。" in errors
-    assert "时间限制必须大于 0。" in errors
-    assert "内存限制必须是大于 0 的整数。" in errors
-    assert "标签必须是字符串列表。" in errors
+    assert "time_limit 必须大于 0。" in errors
+    assert "memory_limit 必须是大于 0 的整数。" in errors
+    assert "tags 必须是字符串列表。" in errors
 
 
 def test_new_problem_limits_are_editable_and_empty_by_default(
@@ -441,6 +508,11 @@ def test_new_problem_limits_are_editable_and_empty_by_default(
         problem_editor.st,
         "text_area",
         lambda _label, value="", **_kwargs: value,
+    )
+    monkeypatch.setattr(
+        problem_editor.st,
+        "multiselect",
+        lambda _label, options, default, **_kwargs: default,
     )
     monkeypatch.setattr(problem_editor.st, "markdown", lambda _message: None)
     monkeypatch.setattr(problem_editor.st, "caption", lambda _message: None)
@@ -470,8 +542,8 @@ def test_new_problem_limits_are_editable_and_empty_by_default(
 
     assert problem_editor.render_problem_form() is None
     assert [label for label, _kwargs in number_inputs] == [
-        "时间限制（秒）",
-        "内存限制（MB）",
+        "time_limit",
+        "memory_limit",
     ]
     assert all(kwargs["value"] is None for _label, kwargs in number_inputs)
     assert all("disabled" not in kwargs for _label, kwargs in number_inputs)
@@ -529,17 +601,189 @@ def test_problem_detail_actions_include_submit_entry(monkeypatch: Any) -> None:
     assert opened == [("submit", "P1")]
 
 
+def test_submit_loaders_follow_problem_and_language_response_shapes(
+    monkeypatch: Any,
+) -> None:
+    problem_options = [{"id": "P1", "title": "A+B"}]
+    monkeypatch.setattr(
+        submit,
+        "list_problems",
+        lambda: (200, {"code": 200, "msg": "success", "data": problem_options}),
+    )
+    monkeypatch.setattr(
+        submit,
+        "list_languages",
+        lambda: (
+            200,
+            {"code": 200, "msg": "success", "data": {"name": ["python", "cpp"]}},
+        ),
+    )
+
+    assert submit.load_problem_options() == problem_options
+    assert submit.load_language_options() == ["python", "cpp"]
+
+
+def test_submit_code_saves_valid_submission_id(monkeypatch: Any) -> None:
+    selected: list[str] = []
+    monkeypatch.setattr(
+        submit,
+        "create_submission",
+        lambda *_args: (
+            200,
+            {
+                "code": 200,
+                "msg": "success",
+                "data": {"submission_id": "s1", "status": "pending"},
+            },
+        ),
+    )
+    monkeypatch.setattr(submit, "show_api_message", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(submit, "set_selected_submission", selected.append)
+
+    assert submit.submit_code("P1", "python", "print(1)") == "s1"
+    assert selected == ["s1"]
+
+
+def test_submission_list_loader_accepts_pending_items(monkeypatch: Any) -> None:
+    rows = [
+        {"submission_id": "s1", "status": "pending"},
+        {"submission_id": "s2", "status": "success", "score": 10, "counts": 30},
+    ]
+    monkeypatch.setattr(
+        submissions,
+        "list_submissions",
+        lambda **_kwargs: (
+            200,
+            {
+                "code": 200,
+                "msg": "success",
+                "data": {"total": 2, "submissions": rows},
+            },
+        ),
+    )
+
+    assert submissions.load_submissions(user_id="u1", page=1, page_size=10) == (
+        2,
+        rows,
+    )
+
+
+def test_submission_detail_and_log_loaders_validate_shapes(monkeypatch: Any) -> None:
+    detail = {
+        "submission_id": "s1",
+        "status": "success",
+        "score": 20,
+        "counts": 30,
+        "compile_info": None,
+        "run_info": {"result": "finished", "message": "done"},
+        "error_info": "",
+    }
+    log = {
+        "details": [{"id": 1, "result": "AC", "time": 0.1, "memory": 10}],
+        "score": 20,
+        "counts": 30,
+    }
+    monkeypatch.setattr(
+        submission_detail,
+        "get_submission",
+        lambda _submission_id: (
+            200,
+            {"code": 200, "msg": "success", "data": detail},
+        ),
+    )
+    monkeypatch.setattr(
+        submission_detail,
+        "get_submission_log",
+        lambda _submission_id: (
+            200,
+            {"code": 200, "msg": "success", "data": log},
+        ),
+    )
+
+    assert submission_detail.load_submission_detail("s1") == detail
+    assert submission_detail.load_submission_log("s1") == log
+
+
+def test_submission_log_403_is_reported_without_crashing(monkeypatch: Any) -> None:
+    shown: list[tuple[int | None, Any]] = []
+    body = {"code": 403, "msg": "permission denied", "data": None}
+    monkeypatch.setattr(
+        submission_detail,
+        "get_submission_log",
+        lambda _submission_id: (403, body),
+    )
+    monkeypatch.setattr(
+        submission_detail,
+        "show_api_message",
+        lambda status_code, response: shown.append((status_code, response)),
+    )
+
+    assert submission_detail.load_submission_log("s1") is None
+    assert shown == [(403, body)]
+
+
+def test_pending_submission_page_does_not_request_log(monkeypatch: Any) -> None:
+    rendered: list[str] = []
+    monkeypatch.setattr(submission_detail, "require_login", lambda: True)
+    monkeypatch.setattr(submission_detail, "_render_back_button", lambda: None)
+    monkeypatch.setattr(submission_detail, "get_selected_submission", lambda: "s1")
+    monkeypatch.setattr(
+        submission_detail,
+        "load_submission_detail",
+        lambda _submission_id: {"submission_id": "s1", "status": "pending"},
+    )
+    monkeypatch.setattr(
+        submission_detail,
+        "render_submission_detail",
+        lambda _submission: rendered.append("detail"),
+    )
+    monkeypatch.setattr(
+        submission_detail,
+        "render_pending_state",
+        lambda _submission_id: rendered.append("pending"),
+    )
+    monkeypatch.setattr(
+        submission_detail,
+        "load_submission_log",
+        lambda _submission_id: (_ for _ in ()).throw(
+            AssertionError("pending submissions must not request logs")
+        ),
+    )
+
+    submission_detail.render_page()
+
+    assert rendered == ["detail", "pending"]
+
+
+def test_submission_status_renders_all_documented_states(monkeypatch: Any) -> None:
+    rendered: list[tuple[str, str]] = []
+    monkeypatch.setattr(ui.st, "info", lambda message: rendered.append(("info", message)))
+    monkeypatch.setattr(
+        ui.st,
+        "success",
+        lambda message: rendered.append(("success", message)),
+    )
+    monkeypatch.setattr(ui.st, "error", lambda message: rendered.append(("error", message)))
+
+    ui.render_submission_status("pending")
+    ui.render_submission_status("success")
+    ui.render_submission_status("error")
+
+    assert [kind for kind, _message in rendered] == ["info", "success", "error"]
+
+
 class StubSidebar:
     def __init__(self) -> None:
         self.options: list[str] = []
 
-    def radio(self, _label: str, options: list[str]) -> str:
-        self.options = options
-        return options[0]
+    def button(self, label: str, **_kwargs: Any) -> bool:
+        self.options.append(label)
+        return False
 
 
 def test_navigation_merges_problem_editor_and_profile_logout(monkeypatch: Any) -> None:
     sidebar = StubSidebar()
+    monkeypatch.setattr(frontend_app.st, "session_state", {})
     monkeypatch.setattr(frontend_app.st, "sidebar", sidebar)
     monkeypatch.setattr(frontend_app.st, "header", lambda _message: None)
     monkeypatch.setattr(frontend_app.st, "info", lambda _message: None)
@@ -549,14 +793,13 @@ def test_navigation_merges_problem_editor_and_profile_logout(monkeypatch: Any) -
         lambda: {"username": "alice", "role": "user"},
     )
     monkeypatch.setattr(frontend_app, "is_admin", lambda: False)
-    monkeypatch.setattr(frontend_app.profile, "render_page", lambda: None)
+    monkeypatch.setattr(frontend_app.problems, "render_page", lambda: None)
 
     frontend_app.build_navigation()
 
     assert sidebar.options == [
-        "我的信息",
         "题目",
-        "提交记录",
+        "评测结果",
     ]
     assert "新增 / 编辑题目" not in sidebar.options
     assert "提交代码" not in sidebar.options
@@ -565,6 +808,7 @@ def test_navigation_merges_problem_editor_and_profile_logout(monkeypatch: Any) -
 
 def test_navigation_keeps_user_management_admin_only(monkeypatch: Any) -> None:
     sidebar = StubSidebar()
+    monkeypatch.setattr(frontend_app.st, "session_state", {})
     monkeypatch.setattr(frontend_app.st, "sidebar", sidebar)
     monkeypatch.setattr(frontend_app.st, "header", lambda _message: None)
     monkeypatch.setattr(frontend_app.st, "info", lambda _message: None)
@@ -574,7 +818,7 @@ def test_navigation_keeps_user_management_admin_only(monkeypatch: Any) -> None:
         lambda: {"username": "admin", "role": "admin"},
     )
     monkeypatch.setattr(frontend_app, "is_admin", lambda: True)
-    monkeypatch.setattr(frontend_app.profile, "render_page", lambda: None)
+    monkeypatch.setattr(frontend_app.problems, "render_page", lambda: None)
 
     frontend_app.build_navigation()
 
@@ -587,6 +831,7 @@ def test_navigation_keeps_user_management_admin_only(monkeypatch: Any) -> None:
 def test_navigation_renders_login_form_for_guests(monkeypatch: Any) -> None:
     sidebar = StubSidebar()
     rendered: list[str] = []
+    monkeypatch.setattr(frontend_app.st, "session_state", {})
     monkeypatch.setattr(frontend_app.st, "sidebar", sidebar)
     monkeypatch.setattr(frontend_app.st, "header", lambda _message: None)
     monkeypatch.setattr(frontend_app.st, "info", lambda _message: None)
@@ -601,6 +846,61 @@ def test_navigation_renders_login_form_for_guests(monkeypatch: Any) -> None:
 
     assert sidebar.options == ["登录", "注册"]
     assert rendered == ["login"]
+
+
+def test_navigation_opens_submission_records(monkeypatch: Any) -> None:
+    sidebar = StubSidebar()
+    rendered: list[str] = []
+    monkeypatch.setattr(
+        frontend_app.st,
+        "session_state",
+        {"navigation_page": "评测结果"},
+    )
+    monkeypatch.setattr(frontend_app.st, "sidebar", sidebar)
+    monkeypatch.setattr(frontend_app.st, "header", lambda _message: None)
+    monkeypatch.setattr(
+        frontend_app,
+        "get_current_user",
+        lambda: {"username": "alice", "role": "user"},
+    )
+    monkeypatch.setattr(frontend_app, "is_admin", lambda: False)
+    monkeypatch.setattr(
+        frontend_app.submissions,
+        "render_page",
+        lambda: rendered.append("submissions"),
+    )
+
+    frontend_app.build_navigation()
+
+    assert rendered == ["submissions"]
+
+
+def test_submission_selector_offers_result_and_log_actions(monkeypatch: Any) -> None:
+    labels: list[str] = []
+
+    class ActionColumn:
+        def button(self, label: str, **_kwargs: Any) -> bool:
+            labels.append(label)
+            return False
+
+    monkeypatch.setattr(submissions.st, "selectbox", lambda *_args, **_kwargs: "s1")
+    monkeypatch.setattr(
+        submissions.st,
+        "columns",
+        lambda _count: [ActionColumn(), ActionColumn()],
+    )
+
+    submissions.render_submission_selector([{"submission_id": "s1"}])
+
+    assert labels == ["查询评测结果", "查询评测日志"]
+
+
+def test_streamlit_builtin_page_navigation_is_disabled() -> None:
+    config = (PROJECT_ROOT / ".streamlit" / "config.toml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "showSidebarNavigation = false" in config
 
 
 def test_frontend_modules_import_from_streamlit_script_directory() -> None:

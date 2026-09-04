@@ -3,11 +3,24 @@ from typing import Any
 import requests
 import streamlit as st
 
-
 _API_SESSION_KEY = "api_session"
 _CURRENT_USER_KEY = "current_user"
 _SELECTED_PROBLEM_KEY = "selected_problem_id"
 _SELECTED_SUBMISSION_KEY = "selected_submission_id"
+_PAGE_STATE_KEYS = (
+    "navigation_page",
+    "problem_page_view",
+    "problem_notice",
+    "submission_page_view",
+    "submission_return_view",
+    "submission_detail_mode",
+    "submission_notice",
+    "submission_filters",
+    "submission_filter_total",
+    "users_page",
+    "users_page_size",
+    "selected_user",
+)
 
 
 def init_session_state() -> None:
@@ -46,6 +59,8 @@ def clear_current_user() -> None:
     st.session_state[_CURRENT_USER_KEY] = None
     st.session_state[_SELECTED_PROBLEM_KEY] = None
     st.session_state[_SELECTED_SUBMISSION_KEY] = None
+    for key in _PAGE_STATE_KEYS:
+        st.session_state.pop(key, None)
     get_api_session().cookies.clear()
 
 

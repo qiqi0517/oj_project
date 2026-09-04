@@ -83,54 +83,74 @@ def render_problem_form(
     initial = initial_data or {}
     editing = initial_data is not None
     tags = initial.get("tags", [])
-    tag_text = ", ".join(str(tag) for tag in tags) if isinstance(tags, list) else ""
+    initial_tags = [str(tag) for tag in tags] if isinstance(tags, list) else []
     initial_time_limit = initial.get("time_limit")
     initial_memory_limit = initial.get("memory_limit")
 
     with st.form(_editor_key("form")):
         problem_id = st.text_input(
-            "题目 ID *",
+            "id",
             value=str(initial.get("id", "")),
             disabled=editing,
+            help="必填",
         )
-        title = st.text_input("标题 *", value=str(initial.get("title", "")))
+        title = st.text_input(
+            "title",
+            value=str(initial.get("title", "")),
+            help="必填",
+        )
         description = st.text_area(
-            "题目描述 *",
+            "description",
             value=str(initial.get("description", "")),
             height=160,
+            help="必填",
         )
         input_description = st.text_area(
-            "输入说明 *",
+            "input_description",
             value=str(initial.get("input_description", "")),
+            help="必填",
         )
         output_description = st.text_area(
-            "输出说明 *",
+            "output_description",
             value=str(initial.get("output_description", "")),
+            help="必填",
         )
         constraints = st.text_area(
-            "数据范围与约束 *",
+            "constraints",
             value=str(initial.get("constraints", "")),
+            help="必填",
         )
 
-        st.markdown("#### 样例 *")
+        st.markdown("#### samples")
         samples = render_samples_editor(initial.get("samples"))
         st.caption("可用表格末尾的空行添加样例，也可选中行后删除。")
 
-        st.markdown("#### 测试点 *")
+        st.markdown("#### testcases")
         testcases = render_testcases_editor(initial.get("testcases"))
         st.caption("所有测试点都会保存到题目配置，并用于评测提交。")
 
-        hint = st.text_area("提示", value=str(initial.get("hint", "")))
-        source = st.text_input("来源", value=str(initial.get("source", "")))
-        tag_input = st.text_input("标签（逗号分隔）", value=tag_text)
-        author = st.text_input("作者", value=str(initial.get("author", "")))
-        difficulty = st.text_input(
-            "难度",
-            value=str(initial.get("difficulty", "")),
+        hint = st.text_area("hint", value=str(initial.get("hint", "")))
+        source = st.text_input("source", value=str(initial.get("source", "")))
+        selected_tags = st.multiselect(
+            "tags",
+            options=initial_tags,
+            default=initial_tags,
+            accept_new_options=True,
+            help="可选择已有 tags，也可输入新的 tag。",
+        )
+        author = st.text_input("author", value=str(initial.get("author", "")))
+        difficulty_options = ["", "easy", "medium", "hard"]
+        initial_difficulty = str(initial.get("difficulty", ""))
+        if initial_difficulty and initial_difficulty not in difficulty_options:
+            difficulty_options.append(initial_difficulty)
+        difficulty = st.selectbox(
+            "difficulty",
+            difficulty_options,
+            index=difficulty_options.index(initial_difficulty),
         )
 
         time_limit_value = st.number_input(
-            "时间限制（秒）",
+            "time_limit",
             min_value=0.01,
             value=(
                 float(initial_time_limit)
@@ -139,9 +159,10 @@ def render_problem_form(
             ),
             step=0.1,
             placeholder="留空时使用语言配置或系统默认值",
+            help="单位: 秒",
         )
         memory_limit_value = st.number_input(
-            "内存限制（MB）",
+            "memory_limit",
             min_value=1,
             value=(
                 int(initial_memory_limit)
@@ -150,6 +171,7 @@ def render_problem_form(
             ),
             step=1,
             placeholder="留空时使用语言配置或系统默认值",
+            help="单位: MB",
         )
 
         submitted = st.form_submit_button(
@@ -172,7 +194,7 @@ def render_problem_form(
         "testcases": testcases,
         "hint": hint.strip(),
         "source": source.strip(),
-        "tags": [tag.strip() for tag in tag_input.split(",") if tag.strip()],
+        "tags": [str(tag).strip() for tag in selected_tags if str(tag).strip()],
         "time_limit": (
             float(time_limit_value) if time_limit_value is not None else None
         ),
@@ -192,12 +214,12 @@ def validate_problem_form(problem_data: dict[str, Any]) -> list[str]:
     """
     errors: list[str] = []
     required_text = {
-        "id": "题目 ID",
-        "title": "标题",
-        "description": "题目描述",
-        "input_description": "输入说明",
-        "output_description": "输出说明",
-        "constraints": "数据范围与约束",
+        "id": "id",
+        "title": "title",
+        "description": "description",
+        "input_description": "input_description",
+        "output_description": "output_description",
+        "constraints": "constraints",
     }
     for field, label in required_text.items():
         value = problem_data.get(field)
@@ -221,18 +243,18 @@ def validate_problem_form(problem_data: dict[str, Any]) -> list[str]:
     if time_limit is not None and (
         not isinstance(time_limit, (int, float)) or time_limit <= 0
     ):
-        errors.append("时间限制必须大于 0。")
+        errors.append("time_limit 必须大于 0。")
     memory_limit = problem_data.get("memory_limit")
     if memory_limit is not None and (
         not isinstance(memory_limit, int)
         or isinstance(memory_limit, bool)
         or memory_limit <= 0
     ):
-        errors.append("内存限制必须是大于 0 的整数。")
+        errors.append("memory_limit 必须是大于 0 的整数。")
 
     tags = problem_data.get("tags")
     if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
-        errors.append("标签必须是字符串列表。")
+        errors.append("tags 必须是字符串列表。")
     return errors
 
 
@@ -265,7 +287,7 @@ def update_problem_from_form(
     """调用编辑题目接口。"""
     errors = validate_problem_form(problem_data)
     if problem_data.get("id") != problem_id:
-        errors.append("请求体中的题目 ID 必须与当前题目一致。")
+        errors.append("请求体中的 id 必须与 URL 中的 problem_id 一致。")
     if errors:
         _show_validation_errors(errors)
         return

@@ -38,14 +38,14 @@ _API_MESSAGE_TRANSLATIONS = {
     "permission denied": "当前用户没有权限执行此操作。",
     "problem not found": "题目不存在。",
     "language not found": "编程语言不存在。",
-    "submission not found": "提交记录不存在。",
+    "submission not found": "评测不存在。",
     "user not found": "用户不存在。",
     "problem already exists": "题目编号已存在。",
     "username already exists": "用户名已存在。",
-    "problem id does not match path": "请求体中的题目编号与当前题目不一致。",
+    "problem id does not match path": "请求体中的 id 与 problem_id 不一致。",
     "submission rate limit exceeded": "一分钟内最多提交 3 次，请稍后再试。",
     "page_size is required": "指定页码时必须同时提供每页数量。",
-    "user_id or problem_id is required": "用户编号和题目编号至少填写一项。",
+    "user_id or problem_id is required": "user_id 和 problem_id 至少提供一项。",
     "submission is still pending": "该提交仍在评测中，暂时不能重新评测。",
     "internal server error": "服务器内部错误，请稍后重试。",
 }
@@ -143,39 +143,58 @@ def render_user_summary(user: dict[str, Any]) -> None:
     role = str(user.get("role", "unknown"))
 
     st.subheader(str(user.get("username", "未知用户")))
-    st.caption(f"用户 ID：{user.get('user_id', '—')}")
+    st.caption(f"user_id: {user.get('user_id', '—')}")
     first, second, third = st.columns(3)
-    first.metric("角色", role_names.get(role, role))
-    second.metric("提交次数", user.get("submit_count", 0))
-    third.metric("通过题目数", user.get("resolve_count", 0))
-    st.write(f"加入时间：{user.get('join_time', '—')}")
+    first.metric("role", role_names.get(role, role))
+    second.metric("submit_count", user.get("submit_count", 0))
+    third.metric("resolve_count", user.get("resolve_count", 0))
+    st.write(f"join_time: {user.get('join_time', '—')}")
 
 
 def render_problem_summary(problem: dict[str, Any]) -> None:
     """展示题目简要信息。"""
     st.subheader(str(problem.get("title", "未命名题目")))
-    st.caption(f"题目 ID：{problem.get('id', '—')}")
+    st.caption(f"id: {problem.get('id', '—')}")
 
     tags = problem.get("tags", [])
     if isinstance(tags, list) and tags:
-        st.write("标签：" + "、".join(str(tag) for tag in tags))
+        st.write("tags: " + ", ".join(str(tag) for tag in tags))
 
     first, second, third = st.columns(3)
-    first.metric("难度", problem.get("difficulty") or "未设置")
+    first.metric("difficulty", problem.get("difficulty") or "未设置")
     time_limit = problem.get("time_limit")
     memory_limit = problem.get("memory_limit")
-    second.metric("时间限制", f"{time_limit} s" if time_limit is not None else "语言默认")
+    second.metric("time_limit", f"{time_limit} s" if time_limit is not None else "语言默认")
     third.metric(
-        "内存限制",
+        "memory_limit",
         f"{memory_limit} MB" if memory_limit is not None else "语言默认",
     )
 
 
 def render_submission_status(status: str) -> None:
     """统一展示 pending / success / error 状态。"""
-    ...
+    if status == "pending":
+        st.info("status: pending（等待评测）")
+    elif status == "success":
+        st.success("status: success（评测完成）")
+    elif status == "error":
+        st.error("status: error（评测失败）")
+    else:
+        st.warning(f"status: {status or '未知'}")
 
 
 def render_testcase_details(details: list[dict[str, Any]]) -> None:
     """展示评测日志中的测试点详情。"""
-    ...
+    if not details:
+        st.info("没有可显示的测试点日志。")
+        return
+    rows = [
+        {
+            "id": detail.get("id", ""),
+            "result": detail.get("result", ""),
+            "time": detail.get("time", 0),
+            "memory": detail.get("memory", 0),
+        }
+        for detail in details
+    ]
+    st.dataframe(rows, use_container_width=True, hide_index=True)
