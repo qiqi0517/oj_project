@@ -9,7 +9,7 @@ from frontend import api_client
 from frontend import app as frontend_app
 from frontend import session as frontend_session
 from frontend import ui
-from frontend.pages import auth, profile, users
+from frontend.pages import auth, problem_editor, problems, profile, users
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -117,6 +117,32 @@ def test_request_api_handles_network_and_json_errors(monkeypatch: Any) -> None:
     assert api_client.request_api("GET", "/api/health") == (502, None)
 
 
+def test_request_api_discards_stale_or_banned_frontend_identity(
+    monkeypatch: Any,
+) -> None:
+    cleared: list[bool] = []
+    responses = iter(
+        [
+            StubResponse(401, {"code": 401, "msg": "not authenticated", "data": None}),
+            StubResponse(403, {"code": 403, "msg": "user is banned", "data": None}),
+        ]
+    )
+
+    class SequentialSession:
+        cookies = requests.cookies.RequestsCookieJar()
+
+        def request(self, **_kwargs: Any) -> StubResponse:
+            return next(responses)
+
+    monkeypatch.setattr(api_client, "get_api_session", SequentialSession)
+    monkeypatch.setattr(api_client, "clear_current_user", lambda: cleared.append(True))
+
+    api_client.request_api("GET", "/api/problems/")
+    api_client.request_api("GET", "/api/problems/")
+
+    assert cleared == [True, True]
+
+
 def test_login_and_logout_use_documented_api_contract(monkeypatch: Any) -> None:
     calls: list[tuple[str, str, dict[str, Any]]] = []
 
@@ -170,6 +196,35 @@ def test_user_helpers_use_documented_api_contract(monkeypatch: Any) -> None:
         ("GET", "/api/users/u1", {}),
         ("GET", "/api/users/", {"params": {"page": 2, "page_size": 10}}),
         ("PUT", "/api/users/u1/role", {"json": {"role": "banned"}}),
+    ]
+
+
+def test_problem_helpers_use_documented_api_contract(monkeypatch: Any) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+    problem_data = {"id": "P1", "title": "A+B"}
+
+    def fake_request_api(
+        method: str,
+        path: str,
+        **kwargs: Any,
+    ) -> tuple[int, dict[str, Any]]:
+        calls.append((method, path, kwargs))
+        return 200, {"code": 200, "msg": "success", "data": None}
+
+    monkeypatch.setattr(api_client, "request_api", fake_request_api)
+
+    api_client.list_problems()
+    api_client.get_problem("P1")
+    api_client.create_problem(problem_data)
+    api_client.update_problem("P1", problem_data)
+    api_client.delete_problem("P1")
+
+    assert calls == [
+        ("GET", "/api/problems/", {}),
+        ("GET", "/api/problems/P1", {}),
+        ("POST", "/api/problems/", {"json": problem_data}),
+        ("PUT", "/api/problems/P1", {"json": problem_data}),
+        ("DELETE", "/api/problems/P1", {}),
     ]
 
 
@@ -330,6 +385,150 @@ def test_user_list_loader_validates_documented_response(monkeypatch: Any) -> Non
     assert users.load_users(1, 10) == (1, listed_users)
 
 
+def test_problem_form_validation_covers_required_shapes_and_limits() -> None:
+    valid_problem = {
+        "id": "P1",
+        "title": "A+B",
+        "description": "Add two numbers.",
+        "input_description": "Two integers.",
+        "output_description": "Their sum.",
+        "samples": [{"input": "1 2", "output": "3"}],
+        "constraints": "Integers.",
+        "testcases": [{"input": "2 3", "output": "5"}],
+        "tags": ["math"],
+        "time_limit": None,
+        "memory_limit": 128,
+    }
+
+    assert problem_editor.validate_problem_form(valid_problem) == []
+
+    invalid_problem = valid_problem | {
+        "title": " ",
+        "samples": [],
+        "testcases": [{"input": 1, "output": "1"}],
+        "time_limit": 0,
+        "memory_limit": 1.5,
+        "tags": "math",
+    }
+    errors = problem_editor.validate_problem_form(invalid_problem)
+    assert "标题不能为空。" in errors
+    assert "至少需要填写一组样例。" in errors
+    assert "第 1 组测试点必须包含字符串 input 和 output。" in errors
+    assert "时间限制必须大于 0。" in errors
+    assert "内存限制必须是大于 0 的整数。" in errors
+    assert "标签必须是字符串列表。" in errors
+
+
+def test_new_problem_limits_are_editable_and_empty_by_default(
+    monkeypatch: Any,
+) -> None:
+    number_inputs: list[tuple[str, dict[str, Any]]] = []
+
+    class FormContext:
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, *_args: Any) -> None:
+            return None
+
+    monkeypatch.setattr(problem_editor.st, "form", lambda _key: FormContext())
+    monkeypatch.setattr(
+        problem_editor.st,
+        "text_input",
+        lambda _label, value="", **_kwargs: value,
+    )
+    monkeypatch.setattr(
+        problem_editor.st,
+        "text_area",
+        lambda _label, value="", **_kwargs: value,
+    )
+    monkeypatch.setattr(problem_editor.st, "markdown", lambda _message: None)
+    monkeypatch.setattr(problem_editor.st, "caption", lambda _message: None)
+    monkeypatch.setattr(
+        problem_editor.st,
+        "data_editor",
+        lambda rows, **_kwargs: rows,
+    )
+    monkeypatch.setattr(
+        problem_editor.st,
+        "checkbox",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("limit checkboxes must not be rendered")
+        ),
+    )
+
+    def fake_number_input(label: str, **kwargs: Any) -> None:
+        number_inputs.append((label, kwargs))
+        return None
+
+    monkeypatch.setattr(problem_editor.st, "number_input", fake_number_input)
+    monkeypatch.setattr(
+        problem_editor.st,
+        "form_submit_button",
+        lambda *_args, **_kwargs: False,
+    )
+
+    assert problem_editor.render_problem_form() is None
+    assert [label for label, _kwargs in number_inputs] == [
+        "时间限制（秒）",
+        "内存限制（MB）",
+    ]
+    assert all(kwargs["value"] is None for _label, kwargs in number_inputs)
+    assert all("disabled" not in kwargs for _label, kwargs in number_inputs)
+
+
+def test_problem_loaders_validate_documented_responses(monkeypatch: Any) -> None:
+    problem_list = [{"id": "P1", "title": "A+B"}]
+    problem_detail = problem_list[0] | {
+        "description": "Add.",
+        "samples": [{"input": "1 2", "output": "3"}],
+        "testcases": [{"input": "2 3", "output": "5"}],
+    }
+    monkeypatch.setattr(
+        problems,
+        "list_problems",
+        lambda: (200, {"code": 200, "msg": "success", "data": problem_list}),
+    )
+    monkeypatch.setattr(
+        problems,
+        "get_problem",
+        lambda problem_id: (
+            200,
+            {"code": 200, "msg": "success", "data": problem_detail},
+        ),
+    )
+
+    assert problems.load_problem_list() == problem_list
+    assert problems.load_problem_detail("P1") == problem_detail
+
+
+def test_problem_detail_actions_include_submit_entry(monkeypatch: Any) -> None:
+    opened: list[tuple[str, str | None]] = []
+
+    class ActionColumn:
+        def __init__(self, clicked_label: str) -> None:
+            self.clicked_label = clicked_label
+
+        def button(self, label: str, **_kwargs: Any) -> bool:
+            return label == self.clicked_label
+
+    monkeypatch.setattr(
+        problems.st,
+        "columns",
+        lambda _count: [ActionColumn(""), ActionColumn("提交代码")],
+    )
+    monkeypatch.setattr(problems, "is_admin", lambda: False)
+    monkeypatch.setattr(
+        problems,
+        "_open_view",
+        lambda view, problem_id=None: opened.append((view, problem_id)),
+    )
+
+    problems.render_problem_actions("P1")
+
+    assert opened == [("submit", "P1")]
+
+
 class StubSidebar:
     def __init__(self) -> None:
         self.options: list[str] = []
@@ -357,10 +556,10 @@ def test_navigation_merges_problem_editor_and_profile_logout(monkeypatch: Any) -
     assert sidebar.options == [
         "我的信息",
         "题目",
-        "提交代码",
         "提交记录",
     ]
     assert "新增 / 编辑题目" not in sidebar.options
+    assert "提交代码" not in sidebar.options
     assert "退出登录" not in sidebar.options
 
 
@@ -381,6 +580,7 @@ def test_navigation_keeps_user_management_admin_only(monkeypatch: Any) -> None:
 
     assert "用户管理" in sidebar.options
     assert "新增 / 编辑题目" not in sidebar.options
+    assert "提交代码" not in sidebar.options
     assert "退出登录" not in sidebar.options
 
 

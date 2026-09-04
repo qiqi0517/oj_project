@@ -153,7 +153,22 @@ def render_user_summary(user: dict[str, Any]) -> None:
 
 def render_problem_summary(problem: dict[str, Any]) -> None:
     """展示题目简要信息。"""
-    ...
+    st.subheader(str(problem.get("title", "未命名题目")))
+    st.caption(f"题目 ID：{problem.get('id', '—')}")
+
+    tags = problem.get("tags", [])
+    if isinstance(tags, list) and tags:
+        st.write("标签：" + "、".join(str(tag) for tag in tags))
+
+    first, second, third = st.columns(3)
+    first.metric("难度", problem.get("difficulty") or "未设置")
+    time_limit = problem.get("time_limit")
+    memory_limit = problem.get("memory_limit")
+    second.metric("时间限制", f"{time_limit} s" if time_limit is not None else "语言默认")
+    third.metric(
+        "内存限制",
+        f"{memory_limit} MB" if memory_limit is not None else "语言默认",
+    )
 
 
 def render_submission_status(status: str) -> None:

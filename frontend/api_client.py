@@ -4,10 +4,10 @@ import requests
 
 if __package__:
     from .config import API_BASE_URL, REQUEST_TIMEOUT
-    from .session import get_api_session
+    from .session import clear_current_user, get_api_session
 else:
     from config import API_BASE_URL, REQUEST_TIMEOUT
-    from session import get_api_session
+    from session import clear_current_user, get_api_session
 
 ApiResponse = dict[str, Any]
 
@@ -46,6 +46,11 @@ def request_api(
 
     if not isinstance(body, dict):
         return response.status_code, None
+
+    if response.status_code == 401 or (
+        response.status_code == 403 and body.get("msg") == "user is banned"
+    ):
+        clear_current_user()
 
     return response.status_code, body
 
@@ -118,21 +123,21 @@ def update_user_role(
 
 def list_problems() -> tuple[int | None, ApiResponse | None]:
     """GET /api/problems/"""
-    ...
+    return request_api("GET", "/api/problems/")
 
 
 def get_problem(
     problem_id: str,
 ) -> tuple[int | None, ApiResponse | None]:
     """GET /api/problems/{problem_id}"""
-    ...
+    return request_api("GET", f"/api/problems/{problem_id}")
 
 
 def create_problem(
     problem_data: dict[str, Any],
 ) -> tuple[int | None, ApiResponse | None]:
     """POST /api/problems/"""
-    ...
+    return request_api("POST", "/api/problems/", json=problem_data)
 
 
 def update_problem(
@@ -140,14 +145,18 @@ def update_problem(
     problem_data: dict[str, Any],
 ) -> tuple[int | None, ApiResponse | None]:
     """PUT /api/problems/{problem_id}"""
-    ...
+    return request_api(
+        "PUT",
+        f"/api/problems/{problem_id}",
+        json=problem_data,
+    )
 
 
 def delete_problem(
     problem_id: str,
 ) -> tuple[int | None, ApiResponse | None]:
     """DELETE /api/problems/{problem_id}"""
-    ...
+    return request_api("DELETE", f"/api/problems/{problem_id}")
 
 
 # 语言接口

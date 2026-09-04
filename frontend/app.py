@@ -2,11 +2,11 @@ import streamlit as st
 
 if __package__:
     from .config import APP_TITLE
-    from .pages import auth, profile, users
+    from .pages import auth, problems, profile, users
     from .session import get_current_user, init_session_state, is_admin
 else:
     from config import APP_TITLE
-    from pages import auth, profile, users
+    from pages import auth, problems, profile, users
     from session import get_current_user, init_session_state, is_admin
 
 
@@ -29,7 +29,6 @@ def build_navigation() -> None:
         pages = [
             "我的信息",
             "题目",
-            "提交代码",
             "提交记录",
         ]
         if is_admin():
@@ -46,7 +45,7 @@ def build_navigation() -> None:
     elif selected_page == "用户管理":
         users.render_page()
     elif selected_page == "题目":
-        st.info("题目列表、详情以及新增 / 编辑功能将在阶段 4 接入此页面。")
+        problems.render_page()
     else:
         st.info("该页面的业务功能将在后续阶段接入。")
 
