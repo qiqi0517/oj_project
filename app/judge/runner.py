@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import shlex
 import shutil
@@ -6,10 +7,11 @@ import signal
 import subprocess
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 from string import Formatter
-from uuid import uuid4
 from typing import Any
+from uuid import uuid4
 
 import psutil
 
@@ -18,6 +20,7 @@ from app.models.judge import ProcessRunResult
 from app.models.language import LanguagePublic
 
 PYTHON_RUN_COMMAND = f'"{sys.executable}" {{src}}'
+logger = logging.getLogger(__name__)
 
 
 def create_run_directory() -> Path:
@@ -41,6 +44,11 @@ def decode_output(data: bytes) -> tuple[str, bool]:
         return data.decode("utf-8"), False
     except UnicodeDecodeError:
         return "", True
+
+
+def bytes_to_mebibytes_rounded_up(byte_count: int) -> int:
+    mebibyte = 1024 * 1024
+    return (byte_count + mebibyte - 1) // mebibyte
 
 
 def track_process_tree(
@@ -101,10 +109,8 @@ async def terminate_process_tree(
     track_process_tree(process.pid, tracked_processes)
     find_orphaned_children(process.pid, tracked_processes)
     if os.name != "nt":
-        try:
+        with suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
     await asyncio.to_thread(
         kill_tracked_processes,
         [
@@ -114,10 +120,8 @@ async def terminate_process_tree(
         ],
     )
     if process.returncode is None:
-        try:
+        with suppress(ProcessLookupError):
             process.kill()
-        except ProcessLookupError:
-            pass
     await process.wait()
 
 
@@ -142,6 +146,114 @@ def process_memory_bytes(
     return total_memory
 
 
+def terminate_popen_tree(
+    process: subprocess.Popen[bytes],
+    tracked_processes: dict[int, psutil.Process],
+) -> None:
+    """Terminate a synchronous subprocess and every child it created."""
+    track_process_tree(process.pid, tracked_processes)
+    find_orphaned_children(process.pid, tracked_processes)
+    kill_tracked_processes(
+        [
+            tracked_process
+            for tracked_process in tracked_processes.values()
+            if tracked_process.pid != process.pid
+        ]
+    )
+    if process.poll() is None:
+        with suppress(ProcessLookupError, OSError):
+            process.kill()
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        with suppress(ProcessLookupError, OSError):
+            process.kill()
+        process.wait()
+
+
+def execute_process_windows(
+    command: list[str],
+    input_bytes: bytes,
+    time_limit: float,
+    memory_limit: int,
+    cwd: Path,
+) -> ProcessRunResult:
+    """Run a judge process without relying on asyncio subprocess support.
+
+    Uvicorn can use a Windows selector event loop, notably in reload mode. That
+    loop deliberately does not implement subprocess transports. Running the
+    blocking subprocess supervisor in an asyncio worker thread keeps judging
+    compatible with either Windows event-loop implementation.
+    """
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=cwd,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+    )
+    start_time = time.perf_counter()
+    tracked_processes: dict[int, psutil.Process] = {}
+    track_process_tree(process.pid, tracked_processes)
+    peak_memory = 0
+    timed_out = False
+    memory_exceeded = False
+    memory_limit_bytes = memory_limit * 1024 * 1024
+    pending_input: bytes | None = input_bytes
+    stdout_bytes = b""
+    stderr_bytes = b""
+
+    try:
+        while True:
+            try:
+                stdout_bytes, stderr_bytes = process.communicate(
+                    pending_input,
+                    timeout=0.01,
+                )
+                break
+            except subprocess.TimeoutExpired:
+                pending_input = None
+
+            elapsed = time.perf_counter() - start_time
+            current_memory = process_memory_bytes(
+                process.pid,
+                tracked_processes,
+            )
+            peak_memory = max(peak_memory, current_memory)
+            if elapsed > time_limit:
+                timed_out = process.poll() is None
+                terminate_popen_tree(process, tracked_processes)
+                stdout_bytes, stderr_bytes = process.communicate()
+                break
+            if current_memory > memory_limit_bytes:
+                memory_exceeded = True
+                terminate_popen_tree(process, tracked_processes)
+                stdout_bytes, stderr_bytes = process.communicate()
+                break
+
+        peak_memory = max(
+            peak_memory,
+            process_memory_bytes(process.pid, tracked_processes),
+        )
+        time_used = time.perf_counter() - start_time
+    finally:
+        terminate_popen_tree(process, tracked_processes)
+
+    stdout, stdout_decode_error = decode_output(stdout_bytes)
+    stderr, stderr_decode_error = decode_output(stderr_bytes)
+    return ProcessRunResult(
+        timed_out=timed_out,
+        memory_exceeded=memory_exceeded,
+        exit_code=process.returncode,
+        time_used=time_used,
+        memory_used=bytes_to_mebibytes_rounded_up(peak_memory),
+        stdout=stdout,
+        stderr=stderr,
+        decode_error=stdout_decode_error or stderr_decode_error,
+    )
+
+
 async def execute_process(
     command: list[str],
     input_bytes: bytes,
@@ -149,12 +261,17 @@ async def execute_process(
     memory_limit: int,
     cwd: Path,
 ) -> ProcessRunResult:
-    start_time = time.perf_counter()
-    process_options: dict[str, Any]
     if os.name == "nt":
-        process_options = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-    else:
-        process_options = {"start_new_session": True}
+        return await asyncio.to_thread(
+            execute_process_windows,
+            command,
+            input_bytes,
+            time_limit,
+            memory_limit,
+            cwd,
+        )
+
+    process_options: dict[str, Any] = {"start_new_session": True}
     process = await asyncio.create_subprocess_exec(
         *command,
         stdin=asyncio.subprocess.PIPE,
@@ -163,6 +280,7 @@ async def execute_process(
         cwd=cwd,
         **process_options,
     )
+    start_time = time.perf_counter()
     communicate_task = asyncio.create_task(process.communicate(input_bytes))
     tracked_processes: dict[int, psutil.Process] = {}
     track_process_tree(process.pid, tracked_processes)
@@ -194,9 +312,9 @@ async def execute_process(
             peak_memory,
             process_memory_bytes(process.pid, tracked_processes),
         )
+        time_used = time.perf_counter() - start_time
     finally:
         await terminate_process_tree(process, tracked_processes)
-    time_used = time.perf_counter() - start_time
     stdout, stdout_decode_error = decode_output(stdout_bytes)
     stderr, stderr_decode_error = decode_output(stderr_bytes)
     return ProcessRunResult(
@@ -204,7 +322,7 @@ async def execute_process(
         memory_exceeded=memory_exceeded,
         exit_code=process.returncode,
         time_used=time_used,
-        memory_used=peak_memory // (1024 * 1024),
+        memory_used=bytes_to_mebibytes_rounded_up(peak_memory),
         stdout=stdout,
         stderr=stderr,
         decode_error=stdout_decode_error or stderr_decode_error,
@@ -268,9 +386,12 @@ async def run_language_case(
     language: LanguagePublic,
 ) -> ProcessRunResult:
     run_dir: Path | None = None
+    stage = "validating language command"
     try:
         validate_language_commands(language.compile_cmd, language.run_cmd)
+        stage = "creating run directory"
         run_dir = create_run_directory()
+        stage = "writing source file"
         source_path = write_source_file(
             run_dir,
             source_code,
@@ -280,6 +401,7 @@ async def run_language_case(
         executable_path = run_dir / executable_name
 
         if language.compile_cmd:
+            stage = "compiling source"
             compile_result = await execute_process(
                 format_command(
                     language.compile_cmd,
@@ -321,6 +443,7 @@ async def run_language_case(
             source_path,
             executable_path,
         )
+        stage = "running program"
         return await execute_process(
             command,
             input_data.encode("utf-8"),
@@ -329,7 +452,13 @@ async def run_language_case(
             run_dir,
         )
     except Exception as exc:
-        return ProcessRunResult(system_error=type(exc).__name__)
+        error_name = type(exc).__name__
+        logger.exception(
+            "Judge runner failed while %s (language=%s)",
+            stage,
+            language.name,
+        )
+        return ProcessRunResult(system_error=f"{error_name}: {exc}")
     finally:
         if run_dir is not None:
             cleanup_run_directory(run_dir)

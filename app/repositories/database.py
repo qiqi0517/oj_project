@@ -162,11 +162,12 @@ CREATE_TABLES = [
 # general database connecter
 @asynccontextmanager
 async def get_db_connection() -> AsyncGenerator[aiosqlite.Connection]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with aiosqlite.connect(DATABASE_PATH, timeout=30.0) as db:
         # make sql query output in the form of aiosqlite.Row
         db.row_factory = aiosqlite.Row
         # enable Foreign Key in database
         await db.execute("PRAGMA foreign_keys = ON")
+        await db.execute("PRAGMA busy_timeout = 30000")
         # when complete db execution, 'yield' ensures get_db_connections exucute on and close
         yield db
 

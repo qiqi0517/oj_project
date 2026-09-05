@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import timedelta
 from typing import Any
 from uuid import uuid4
@@ -29,6 +30,7 @@ from app.utils.exceptions import AppError
 from app.utils.time import to_iso8601, utc_now
 
 judge_tasks: set[asyncio.Task[None]] = set()
+logger = logging.getLogger(__name__)
 
 
 def resolve_resource_limits(
@@ -135,6 +137,7 @@ async def judge_submission(submission_id: str) -> None:
             finished_at=to_iso8601(utc_now()),
         )
     except Exception:
+        logger.exception("Judge task failed (submission_id=%s)", submission_id)
         await submission_repository.mark_submission_error(
             submission_id,
             "judge internal error",

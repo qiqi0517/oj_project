@@ -189,7 +189,7 @@ async def set_submission_pending(
 ) -> bool:
     async with get_db_connection() as db:
         try:
-            await db.execute("BEGIN")
+            await db.execute("BEGIN IMMEDIATE")
             cursor = await db.execute(
                 """
                 UPDATE submissions
@@ -225,7 +225,7 @@ async def save_judge_result(
 ) -> None:
     async with get_db_connection() as db:
         try:
-            await db.execute("BEGIN")
+            await db.execute("BEGIN IMMEDIATE")
             cursor = await db.execute(
                 "SELECT result FROM submissions WHERE id = ?",
                 (submission_id,),
@@ -284,7 +284,7 @@ async def save_judge_result(
                 "DELETE FROM judge_logs WHERE submission_id = ?",
                 (submission_id,),
             )
-            for case, testcase in zip(result.cases, testcases):
+            for case, testcase in zip(result.cases, testcases, strict=True):
                 await db.execute(
                     """
                     INSERT INTO judge_logs (
@@ -339,7 +339,7 @@ async def mark_submission_error(
 ) -> None:
     async with get_db_connection() as db:
         try:
-            await db.execute("BEGIN")
+            await db.execute("BEGIN IMMEDIATE")
             cursor = await db.execute(
                 """
                 SELECT user_id, problem_id, result

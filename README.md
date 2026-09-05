@@ -50,7 +50,17 @@ password: admintestpassword
 在项目根目录运行：
 
 ```powershell
-python -m uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload --reload-dir app
+```
+
+必须将自动重载范围限制在 `app/`。评测器会在项目的 `temp/` 目录中创建
+`main.py`；如果直接使用 `--reload` 监视整个项目，WatchFiles 会把参赛代码
+误认为后端源码变更，并在评测过程中重启服务，导致 `judge system error`。
+
+如果不需要开发时自动重载，也可以使用：
+
+```powershell
+python -m uvicorn app.main:app
 ```
 
 Swagger：<http://127.0.0.1:8000/docs>
