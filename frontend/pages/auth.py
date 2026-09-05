@@ -41,15 +41,15 @@ def _login_user_from_response(
 
 
 def render_login_form() -> None:
-    """登录表单。"""
+    """Render the sign-in form."""
     if is_logged_in():
-        st.info("当前已有用户登录。如需切换账号，请先退出登录。")
+        st.info("当前已有用户登录，请先退出再切换账号。")
         return
 
     with st.form("login_form"):
-        username = st.text_input("username", autocomplete="username")
+        username = st.text_input("用户名", autocomplete="username")
         password = st.text_input(
-            "password",
+            "密码",
             type="password",
             autocomplete="current-password",
         )
@@ -59,16 +59,15 @@ def render_login_form() -> None:
         return
     normalized_username = (username or "").strip()
     if not normalized_username or not password:
-        st.error("请输入用户名和密码。")
+        st.error("username 和 password 均为必填项。")
         return
 
     status_code, body = login(normalized_username, password)
+    if not show_api_message(status_code, body, show_success=False):
+        return
     user = _login_user_from_response(status_code, body)
     if user is None:
-        if status_code == 200:
-            st.error("后端登录响应缺少有效的用户信息。")
-        else:
-            show_api_message(status_code, body)
+        st.error("API 响应格式无效：data 中没有有效的用户信息。")
         return
     if not show_api_message(status_code, body):
         return
@@ -79,20 +78,20 @@ def render_login_form() -> None:
 
 
 def render_register_form() -> None:
-    """注册表单。"""
+    """Render the registration form."""
     if is_logged_in():
-        st.info("当前已有用户登录。如需注册新账号，请先退出登录。")
+        st.info("当前已有用户登录，请先退出再注册账号。")
         return
 
     with st.form("register_form"):
-        username = st.text_input("username", autocomplete="username")
+        username = st.text_input("用户名", autocomplete="username")
         password = st.text_input(
-            "password",
+            "密码",
             type="password",
             autocomplete="new-password",
         )
         password_confirmation = st.text_input(
-            "password_confirmation",
+            "确认密码",
             type="password",
             autocomplete="new-password",
         )
@@ -103,28 +102,28 @@ def render_register_form() -> None:
 
     normalized_username = (username or "").strip()
     if not 3 <= len(normalized_username) <= 40:
-        st.error("用户名长度必须为 3～40 个字符。")
+        st.error("username 长度必须为 3 至 40 个字符。")
         return
     if not password or len(password) < 6:
-        st.error("密码长度不能少于 6 位。")
+        st.error("password 至少需要 6 个字符。")
         return
     if password != password_confirmation:
-        st.error("两次输入的密码不一致。")
+        st.error("password_confirmation 与 password 不一致。")
         return
 
     status_code, body = register_user(normalized_username, password)
-    if show_api_message(status_code, body, success_message="注册成功，请登录。"):
-        st.info("注册不会自动登录，请使用新账号登录。")
+    if show_api_message(status_code, body):
+        st.info("注册成功后不会自动登录，请返回登录页面。")
 
 
 def render_logout_button() -> None:
-    """退出登录按钮。"""
+    """Render the sign-out action."""
     if not is_logged_in():
         st.info("当前没有已登录用户。")
         return
 
-    st.write("退出后，当前浏览器会话将无法继续访问受保护接口。")
-    if not st.button("确认退出登录", type="primary", use_container_width=True):
+    st.write("退出登录后，当前 Session 将无法继续访问受保护的 API。")
+    if not st.button("退出登录", type="primary", use_container_width=True):
         return
 
     status_code, body = logout()
@@ -132,12 +131,12 @@ def render_logout_button() -> None:
         return
 
     clear_current_user()
-    st.session_state[_AUTH_NOTICE_KEY] = "已安全退出登录。"
+    st.session_state[_AUTH_NOTICE_KEY] = "已退出登录。"
     st.rerun()
 
 
 def render_page() -> None:
-    """认证页面入口。"""
+    """Render authentication actions."""
     if is_logged_in():
         render_logout_button()
         return
@@ -150,5 +149,5 @@ def render_page() -> None:
 
 
 def pop_auth_notice() -> str | None:
-    """取出只展示一次的认证结果提示。"""
+    """Return and remove a one-time authentication notice."""
     return st.session_state.pop(_AUTH_NOTICE_KEY, None)

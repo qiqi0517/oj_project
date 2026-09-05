@@ -5,11 +5,21 @@ import streamlit as st
 if __package__ == "frontend.pages":
     from ..api_client import delete_problem, get_problem, list_problems
     from ..session import get_selected_problem, is_admin, set_selected_problem
-    from ..ui import render_problem_summary, require_login, show_api_message
+    from ..ui import (
+        get_selected_row_index,
+        render_problem_summary,
+        require_login,
+        show_api_message,
+    )
 else:
     from api_client import delete_problem, get_problem, list_problems
     from session import get_selected_problem, is_admin, set_selected_problem
-    from ui import render_problem_summary, require_login, show_api_message
+    from ui import (
+        get_selected_row_index,
+        render_problem_summary,
+        require_login,
+        show_api_message,
+    )
 
 
 _VIEW_KEY = "problem_page_view"
@@ -24,96 +34,108 @@ def _open_view(view: str, problem_id: str | None = None) -> None:
 
 
 def load_problem_list() -> list[dict[str, Any]]:
-    """加载题目列表。"""
+    """Load problems through GET /api/problems/."""
     status_code, body = list_problems()
-    if status_code != 200 or body is None or body.get("code") != 200:
-        show_api_message(status_code, body)
+    if not show_api_message(status_code, body, show_success=False):
         return []
 
-    data = body.get("data")
+    data = body.get("data")  # type: ignore
     if not isinstance(data, list):
-        st.error("后端题目列表响应格式异常。")
+        st.error("API 响应格式无效：data 应为题目列表。")
         return []
     return [problem for problem in data if isinstance(problem, dict)]
 
 
 def render_problem_list(problems: list[dict[str, Any]]) -> None:
-    """展示所有题目的 id 和 title。"""
+    """Render the id and title fields returned by the problem-list API."""
     if not problems:
-        st.info("当前没有题目，可以先新增一道题目。")
+        st.info("题库中暂无题目，可以先创建一道题目。")
         return
 
     rows = [
-        {"id": problem.get("id", ""), "title": problem.get("title", "")}
+        {
+            "题目编号": problem.get("id", ""),
+            "题目名称": problem.get("title", ""),
+        }
         for problem in problems
     ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
-
-    selectable = [
-        problem
-        for problem in problems
-        if isinstance(problem.get("id"), str) and problem.get("id")
-    ]
-    if not selectable:
-        return
-    labels = {
-        f"{problem['id']} · {problem.get('title', '未命名题目')}": problem["id"]
-        for problem in selectable
-    }
-    selected_label = st.selectbox("id", list(labels))
-    if st.button("查询题目详情", type="primary", use_container_width=True):
-        _open_view("detail", labels[selected_label])
+    event = st.dataframe(
+        rows,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="problem_list_table",
+    )
+    selected_index = get_selected_row_index(event)
+    selected_id = None
+    if selected_index is not None and selected_index < len(problems):
+        candidate = problems[selected_index].get("id")
+        if isinstance(candidate, str) and candidate:
+            selected_id = candidate
+    st.caption("请在列表左侧选中一条题目记录。")
+    if st.button(
+        "查看选中题目",
+        type="primary",
+        use_container_width=True,
+        disabled=selected_id is None,
+    ):
+        _open_view("detail", selected_id)
 
 
 def load_problem_detail(problem_id: str) -> dict[str, Any] | None:
-    """加载题目详情。"""
+    """Load a problem through GET /api/problems/{problem_id}."""
     status_code, body = get_problem(problem_id)
-    if status_code != 200 or body is None or body.get("code") != 200:
-        show_api_message(status_code, body)
+    if not show_api_message(status_code, body, show_success=False):
         return None
 
-    data = body.get("data")
+    data = body.get("data")  # type: ignore
     if not isinstance(data, dict):
-        st.error("后端题目详情响应格式异常。")
+        st.error("API 响应格式无效：data 应包含题目对象。")
         return None
     return data
 
 
-def _render_samples(samples: Any) -> None:
-    st.markdown("### samples")
-    if not isinstance(samples, list) or not samples:
-        st.info("该题目没有可显示的样例。")
+def _render_io_cases(field_name: str, cases: Any) -> None:
+    """展示 API 中 samples 或 testcases 的 input/output 字段。"""
+    display_name = "样例" if field_name == "samples" else "测试点"
+    st.markdown(f"### {display_name}")
+    if not isinstance(cases, list) or not cases:
+        st.info(f"该题目暂无{display_name}。")
         return
 
-    for index, sample in enumerate(samples, start=1):
-        if not isinstance(sample, dict):
+    for index, case in enumerate(cases, start=1):
+        if not isinstance(case, dict):
             continue
-        st.markdown(f"**sample {index}**")
+        item_name = "样例" if field_name == "samples" else "测试点"
+        st.markdown(f"**{item_name} {index}**")
         input_column, output_column = st.columns(2)
         with input_column:
-            st.caption("input")
-            st.code(str(sample.get("input", "")), language=None)
+            st.caption("输入")
+            st.code(str(case.get("input", "")), language=None)
         with output_column:
-            st.caption("output")
-            st.code(str(sample.get("output", "")), language=None)
+            st.caption("输出")
+            st.code(str(case.get("output", "")), language=None)
 
 
 def render_problem_detail(problem: dict[str, Any]) -> None:
-    """展示完整题面。"""
+    """Render all problem fields returned by the API."""
     render_problem_summary(problem)
-    st.markdown("### description")
+    st.markdown("### 题目描述")
     st.markdown(str(problem.get("description", "")))
-    st.markdown("### input_description")
+    st.markdown("### 输入说明")
     st.markdown(str(problem.get("input_description", "")))
-    st.markdown("### output_description")
+    st.markdown("### 输出说明")
     st.markdown(str(problem.get("output_description", "")))
-    _render_samples(problem.get("samples"))
-    st.markdown("### constraints")
+    _render_io_cases("samples", problem.get("samples"))
+    st.markdown("### 数据范围")
     st.markdown(str(problem.get("constraints", "")))
+    with st.expander("测试点", expanded=False):
+        _render_io_cases("testcases", problem.get("testcases"))
 
     hint = problem.get("hint")
     if hint:
-        st.markdown("### hint")
+        st.markdown("### 提示")
         st.markdown(str(hint))
     source = problem.get("source")
     author = problem.get("author")
@@ -122,8 +144,8 @@ def render_problem_detail(problem: dict[str, Any]) -> None:
             " · ".join(
                 part
                 for part in (
-                    f"source: {source}" if source else "",
-                    f"author: {author}" if author else "",
+                    f"来源：{source}" if source else "",
+                    f"作者：{author}" if author else "",
                 )
                 if part
             )
@@ -131,21 +153,21 @@ def render_problem_detail(problem: dict[str, Any]) -> None:
 
 
 def render_problem_actions(problem_id: str) -> None:
-    """展示进入编辑、提交以及管理员删除等操作入口。"""
-    edit_column, submit_column = st.columns(2)
-    if edit_column.button("编辑题目", use_container_width=True):
+    """Render edit and admin-only delete actions."""
+    if st.button("编辑题目", use_container_width=True):
         _open_view("edit", problem_id)
-    if submit_column.button("提交代码", type="primary", use_container_width=True):
-        _open_view("submit", problem_id)
 
     if is_admin():
         confirm_and_delete_problem(problem_id)
 
 
 def confirm_and_delete_problem(problem_id: str) -> None:
-    """管理员删除题目。"""
+    """Delete a problem through the admin-only API endpoint."""
     with st.expander("删除题目", expanded=False):
-        st.warning("删除会同时移除相关测试点、提交和评测日志，且无法撤销。")
+        st.warning(
+            "删除题目也会删除关联的 testcases、评测记录、评测日志和访问日志，"
+            "且无法撤销。"
+        )
         confirmed = st.checkbox(
             f"确认删除题目 {problem_id}",
             key=f"confirm_delete_problem_{problem_id}",
@@ -169,7 +191,7 @@ def confirm_and_delete_problem(problem_id: str) -> None:
 def _render_list_page() -> None:
     top_left, top_right = st.columns([3, 1])
     top_left.subheader("题目列表")
-    if top_right.button("新增题目", type="primary", use_container_width=True):
+    if top_right.button("创建题目", type="primary", use_container_width=True):
         _open_view("create")
     render_problem_list(load_problem_list())
 
@@ -180,19 +202,17 @@ def _render_detail_page(problem_id: str) -> None:
     problem = load_problem_detail(problem_id)
     if problem is None:
         return
-    render_problem_detail(problem)
-    st.divider()
-    render_problem_actions(problem_id)
-
-
-def _render_submit_entry(problem_id: str) -> None:
-    if st.button("← 返回题目详情"):
-        _open_view("detail", problem_id)
-    if __package__ == "frontend.pages":
-        from . import submit
-    else:
-        from pages import submit
-    submit.render_page()
+    detail_column, submission_column = st.columns(2, gap="large")
+    with detail_column:
+        render_problem_detail(problem)
+        st.divider()
+        render_problem_actions(problem_id)
+    with submission_column:
+        if __package__ == "frontend.pages":
+            from . import submit
+        else:
+            from pages import submit
+        submit.render_problem_submission(problem)
 
 
 def _render_submission_detail() -> None:
@@ -204,7 +224,7 @@ def _render_submission_detail() -> None:
 
 
 def render_page() -> None:
-    """题目页面入口。"""
+    """Render the problems module."""
     if not require_login():
         return
 
@@ -227,7 +247,8 @@ def render_page() -> None:
     if view == "detail" and problem_id:
         _render_detail_page(problem_id)
     elif view == "submit" and problem_id:
-        _render_submit_entry(problem_id)
+        st.session_state[_VIEW_KEY] = "detail"
+        st.rerun()
     elif view == "submission_detail":
         _render_submission_detail()
     else:

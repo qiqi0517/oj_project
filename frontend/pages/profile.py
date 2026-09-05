@@ -15,27 +15,26 @@ else:
 
 
 def load_current_user_profile() -> dict[str, Any] | None:
-    """从后端重新获取当前用户信息。"""
+    """Refresh the current user's public data through the API."""
     current_user = get_current_user()
     if current_user is None:
         return None
 
     user_id = current_user.get("user_id")
     if not isinstance(user_id, str) or not user_id:
-        st.error("当前登录信息缺少有效的 user_id，请重新登录。")
+        st.error("当前 Session 中没有有效的 user_id，请重新登录。")
         clear_current_user()
         return None
 
     status_code, body = get_user(user_id)
-    if status_code != 200 or body is None or body.get("code") != 200:
-        show_api_message(status_code, body)
+    if not show_api_message(status_code, body, show_success=False):
         if status_code in {401, 403}:
             clear_current_user()
         return None
 
     user = body.get("data")
     if not isinstance(user, dict):
-        st.error("后端用户信息响应格式异常。")
+        st.error("API 响应格式无效：data 应包含用户对象。")
         return None
 
     set_current_user(user)
@@ -43,12 +42,12 @@ def load_current_user_profile() -> dict[str, Any] | None:
 
 
 def render_profile(user: dict[str, Any]) -> None:
-    """展示用户名、角色、加入时间、提交数、通过数。"""
+    """Render the current user's public API fields."""
     render_user_summary(user)
 
 
 def render_page() -> None:
-    """用户信息页面入口。"""
+    """Render the profile page."""
     if not require_login():
         return
 

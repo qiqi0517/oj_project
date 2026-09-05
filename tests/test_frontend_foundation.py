@@ -140,7 +140,7 @@ def test_request_api_discards_stale_or_banned_frontend_identity(
     )
 
     class SequentialSession:
-        cookies = requests.cookies.RequestsCookieJar()
+        cookies = requests.cookies.RequestsCookieJar()  # type: ignore
 
         def request(self, **_kwargs: Any) -> StubResponse:
             return next(responses)
@@ -263,6 +263,14 @@ def test_submission_helpers_use_documented_api_contract(monkeypatch: Any) -> Non
     )
     api_client.get_submission("s1")
     api_client.get_submission_log("s1")
+    api_client.rejudge_submission("s1")
+    api_client.update_log_visibility("P1", True)
+    api_client.list_log_access(
+        user_id="u1",
+        problem_id="P1",
+        page=2,
+        page_size=10,
+    )
 
     assert calls == [
         ("GET", "/api/languages/", {}),
@@ -292,6 +300,24 @@ def test_submission_helpers_use_documented_api_contract(monkeypatch: Any) -> Non
         ),
         ("GET", "/api/submissions/s1", {}),
         ("GET", "/api/submissions/s1/log", {}),
+        ("PUT", "/api/submissions/s1/rejudge", {}),
+        (
+            "PUT",
+            "/api/problems/P1/log_visibility",
+            {"json": {"public_cases": True}},
+        ),
+        (
+            "GET",
+            "/api/logs/access/",
+            {
+                "params": {
+                    "user_id": "u1",
+                    "problem_id": "P1",
+                    "page": 2,
+                    "page_size": 10,
+                }
+            },
+        ),
     ]
 
 
@@ -304,10 +330,13 @@ def test_login_response_requires_complete_user_identity() -> None:
 
     assert auth._login_user_from_response(200, body) == body["data"]
     assert auth._login_user_from_response(401, body) is None
-    assert auth._login_user_from_response(
-        200,
-        {"code": 200, "msg": "login success", "data": {"username": "alice"}},
-    ) is None
+    assert (
+        auth._login_user_from_response(
+            200,
+            {"code": 200, "msg": "login success", "data": {"username": "alice"}},
+        )
+        is None
+    )
 
 
 def test_show_api_message_reports_success_and_failures(monkeypatch: Any) -> None:
@@ -319,19 +348,35 @@ def test_show_api_message_reports_success_and_failures(monkeypatch: Any) -> None
     assert ui.show_api_message(
         200,
         {"code": 200, "msg": "success", "data": None},
-        success_message="保存成功。",
+        success_message="Saved.",
     )
     assert not ui.show_api_message(None, None)
+    assert not ui.show_api_message(502, None)
     assert not ui.show_api_message(
         403,
         {"code": 403, "msg": "user is banned", "data": None},
     )
 
-    assert successes == ["保存成功。"]
+    assert successes == ["Saved."]
     assert errors == [
-        "无法连接后端，请确认后端服务是否已启动。",
-        "账号已被禁用，无法执行此操作。",
+        "无法连接后端，请确认 FastAPI 服务已经启动。",
+        "后端返回了非 JSON 响应（HTTP 502）。",
+        "当前账号已被封禁。（HTTP 403，msg: user is banned）",
     ]
+
+
+def test_show_api_message_can_validate_success_without_rendering(
+    monkeypatch: Any,
+) -> None:
+    successes: list[str] = []
+    monkeypatch.setattr(ui.st, "success", successes.append)
+
+    assert ui.show_api_message(
+        200,
+        {"code": 200, "msg": "success", "data": []},
+        show_success=False,
+    )
+    assert successes == []
 
 
 def test_show_api_message_covers_required_status_codes(monkeypatch: Any) -> None:
@@ -339,13 +384,13 @@ def test_show_api_message_covers_required_status_codes(monkeypatch: Any) -> None
     monkeypatch.setattr(ui.st, "error", errors.append)
 
     expected_messages = {
-        400: "请求参数有误，请检查填写内容。",
-        401: "尚未登录或登录状态已失效，请重新登录。",
-        403: "权限不足，或账号已被禁用。",
-        404: "请求的资源不存在。",
-        409: "资源状态冲突，请刷新后重试。",
-        429: "操作过于频繁，请稍后再试。",
-        500: "服务器内部错误，请稍后重试。",
+        400: "请求参数无效，请检查提交的字段。（HTTP 400）",
+        401: "需要登录或 Session 已过期，请重新登录。（HTTP 401）",
+        403: "权限不足，或当前账号已被封禁。（HTTP 403）",
+        404: "未找到请求的资源。（HTTP 404）",
+        409: "资源状态冲突，请刷新后重试。（HTTP 409）",
+        429: "请求过于频繁，请稍后重试。（HTTP 429）",
+        500: "后端发生内部错误，请稍后重试。（HTTP 500）",
     }
     for status_code, expected in expected_messages.items():
         assert not ui.show_api_message(
@@ -363,8 +408,8 @@ def test_show_api_message_rejects_invalid_response_contract(monkeypatch: Any) ->
     assert not ui.show_api_message(200, {"code": 200, "msg": "success"})
 
     assert errors == [
-        "后端响应格式异常：HTTP 状态码与响应 code 不一致。",
-        "后端响应格式异常，缺少有效的 code、msg 或 data 字段。",
+        "API 响应格式无效：HTTP 状态码 200 与 JSON code 400 不一致。",
+        "API 响应格式无效：应包含 code（int）、msg（str）和 data 字段。",
     ]
 
 
@@ -384,7 +429,7 @@ def test_permission_guards_follow_current_session(monkeypatch: Any) -> None:
     monkeypatch.setattr(ui, "is_admin", lambda: True)
     assert ui.require_admin()
     assert warnings == ["请先登录后再访问此页面。"]
-    assert errors == ["此页面仅限管理员访问。"]
+    assert errors == ["此页面仅限 admin 访问。"]
 
 
 def test_profile_refreshes_session_from_backend(monkeypatch: Any) -> None:
@@ -420,7 +465,9 @@ def test_profile_page_contains_logout_action(monkeypatch: Any) -> None:
     rendered: list[str] = []
     monkeypatch.setattr(profile, "require_login", lambda: True)
     monkeypatch.setattr(profile, "load_current_user_profile", lambda: {"user_id": "u1"})
-    monkeypatch.setattr(profile, "render_profile", lambda _user: rendered.append("profile"))
+    monkeypatch.setattr(
+        profile, "render_profile", lambda _user: rendered.append("profile")
+    )
     monkeypatch.setattr(profile.st, "divider", lambda: None)
     monkeypatch.setattr(profile.st, "subheader", lambda _message: None)
     monkeypatch.setattr(
@@ -452,6 +499,23 @@ def test_user_list_loader_validates_documented_response(monkeypatch: Any) -> Non
     assert users.load_users(1, 10) == (1, listed_users)
 
 
+def test_user_table_uses_single_row_selection(monkeypatch: Any) -> None:
+    dataframe_kwargs: dict[str, Any] = {}
+    listed_users = [
+        {"user_id": "u1", "username": "alice", "role": "user"},
+        {"user_id": "u2", "username": "bob", "role": "admin"},
+    ]
+
+    def fake_dataframe(_rows: Any, **kwargs: Any) -> dict[str, Any]:
+        dataframe_kwargs.update(kwargs)
+        return {"selection": {"rows": [1]}}
+
+    monkeypatch.setattr(users.st, "dataframe", fake_dataframe)
+
+    assert users.render_user_table(listed_users) == listed_users[1]
+    assert dataframe_kwargs["selection_mode"] == "single-row"
+
+
 def test_problem_form_validation_covers_required_shapes_and_limits() -> None:
     valid_problem = {
         "id": "P1",
@@ -478,9 +542,9 @@ def test_problem_form_validation_covers_required_shapes_and_limits() -> None:
         "tags": "math",
     }
     errors = problem_editor.validate_problem_form(invalid_problem)
-    assert "title不能为空。" in errors
-    assert "至少需要填写一组样例。" in errors
-    assert "第 1 组测试点必须包含字符串 input 和 output。" in errors
+    assert "title 为必填项。" in errors
+    assert "samples 至少需要包含一项。" in errors
+    assert "testcases[0] 必须包含字符串类型的 input 和 output。" in errors
     assert "time_limit 必须大于 0。" in errors
     assert "memory_limit 必须是大于 0 的整数。" in errors
     assert "tags 必须是字符串列表。" in errors
@@ -490,6 +554,9 @@ def test_new_problem_limits_are_editable_and_empty_by_default(
     monkeypatch: Any,
 ) -> None:
     number_inputs: list[tuple[str, dict[str, Any]]] = []
+    text_inputs: list[tuple[str, str]] = []
+    text_areas: list[str] = []
+    submit_labels: list[str] = []
 
     class FormContext:
         def __enter__(self) -> None:
@@ -498,16 +565,38 @@ def test_new_problem_limits_are_editable_and_empty_by_default(
         def __exit__(self, *_args: Any) -> None:
             return None
 
+    class ColumnContext(FormContext):
+        pass
+
+    monkeypatch.setattr(problem_editor.st, "session_state", {})
+    monkeypatch.setattr(
+        problem_editor, "get_current_user", lambda: {"username": "alice"}
+    )
     monkeypatch.setattr(problem_editor.st, "form", lambda _key: FormContext())
+
+    def fake_text_input(label: str, value: str = "", **_kwargs: Any) -> str:
+        text_inputs.append((label, value))
+        return value
+
     monkeypatch.setattr(
         problem_editor.st,
         "text_input",
-        lambda _label, value="", **_kwargs: value,
+        fake_text_input,
     )
+
+    def fake_text_area(label: str, value: str = "", **_kwargs: Any) -> str:
+        text_areas.append(label)
+        return value
+
     monkeypatch.setattr(
         problem_editor.st,
         "text_area",
-        lambda _label, value="", **_kwargs: value,
+        fake_text_area,
+    )
+    monkeypatch.setattr(
+        problem_editor.st,
+        "columns",
+        lambda *_args, **_kwargs: [ColumnContext(), ColumnContext()],
     )
     monkeypatch.setattr(
         problem_editor.st,
@@ -519,7 +608,9 @@ def test_new_problem_limits_are_editable_and_empty_by_default(
     monkeypatch.setattr(
         problem_editor.st,
         "data_editor",
-        lambda rows, **_kwargs: rows,
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("samples 和 testcases 不应使用表格编辑")
+        ),
     )
     monkeypatch.setattr(
         problem_editor.st,
@@ -534,19 +625,33 @@ def test_new_problem_limits_are_editable_and_empty_by_default(
         return None
 
     monkeypatch.setattr(problem_editor.st, "number_input", fake_number_input)
+
+    def fake_submit_button(label: str, **_kwargs: Any) -> bool:
+        submit_labels.append(label)
+        return False
+
     monkeypatch.setattr(
         problem_editor.st,
         "form_submit_button",
-        lambda *_args, **_kwargs: False,
+        fake_submit_button,
+    )
+    monkeypatch.setattr(
+        problem_editor.st,
+        "selectbox",
+        lambda _label, options, index=0, **_kwargs: options[index],
     )
 
     assert problem_editor.render_problem_form() is None
     assert [label for label, _kwargs in number_inputs] == [
-        "time_limit",
-        "memory_limit",
+        "时间限制",
+        "空间限制",
     ]
     assert all(kwargs["value"] is None for _label, kwargs in number_inputs)
     assert all("disabled" not in kwargs for _label, kwargs in number_inputs)
+    assert ("作者", "alice") in text_inputs
+    assert text_areas.count("输入") == 2
+    assert text_areas.count("输出") == 2
+    assert submit_labels[:2] == ["＋ 增加样例", "＋ 增加测试点"]
 
 
 def test_problem_loaders_validate_documented_responses(monkeypatch: Any) -> None:
@@ -574,20 +679,12 @@ def test_problem_loaders_validate_documented_responses(monkeypatch: Any) -> None
     assert problems.load_problem_detail("P1") == problem_detail
 
 
-def test_problem_detail_actions_include_submit_entry(monkeypatch: Any) -> None:
+def test_problem_detail_actions_keep_edit_entry(monkeypatch: Any) -> None:
     opened: list[tuple[str, str | None]] = []
-
-    class ActionColumn:
-        def __init__(self, clicked_label: str) -> None:
-            self.clicked_label = clicked_label
-
-        def button(self, label: str, **_kwargs: Any) -> bool:
-            return label == self.clicked_label
-
     monkeypatch.setattr(
         problems.st,
-        "columns",
-        lambda _count: [ActionColumn(""), ActionColumn("提交代码")],
+        "button",
+        lambda label, **_kwargs: label == "编辑题目",
     )
     monkeypatch.setattr(problems, "is_admin", lambda: False)
     monkeypatch.setattr(
@@ -598,7 +695,124 @@ def test_problem_detail_actions_include_submit_entry(monkeypatch: Any) -> None:
 
     problems.render_problem_actions("P1")
 
-    assert opened == [("submit", "P1")]
+    assert opened == [("edit", "P1")]
+
+
+def test_problem_list_uses_single_row_table_selection(monkeypatch: Any) -> None:
+    opened: list[tuple[str, str | None]] = []
+    dataframe_kwargs: dict[str, Any] = {}
+
+    def fake_dataframe(_rows: Any, **kwargs: Any) -> dict[str, Any]:
+        dataframe_kwargs.update(kwargs)
+        return {"selection": {"rows": [1]}}
+
+    monkeypatch.setattr(problems.st, "dataframe", fake_dataframe)
+    monkeypatch.setattr(problems.st, "caption", lambda _message: None)
+    monkeypatch.setattr(
+        problems.st,
+        "selectbox",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("题目列表不应使用下拉框选择")
+        ),
+    )
+    monkeypatch.setattr(problems.st, "button", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        problems,
+        "_open_view",
+        lambda view, problem_id=None: opened.append((view, problem_id)),
+    )
+
+    problems.render_problem_list(
+        [{"id": "P1", "title": "甲"}, {"id": "P2", "title": "乙"}]
+    )
+
+    assert dataframe_kwargs["selection_mode"] == "single-row"
+    assert dataframe_kwargs["on_select"] == "rerun"
+    assert opened == [("detail", "P2")]
+
+
+def test_problem_detail_renders_samples_and_testcases(monkeypatch: Any) -> None:
+    rendered_fields: list[tuple[str, Any]] = []
+    monkeypatch.setattr(problems, "render_problem_summary", lambda _problem: None)
+    monkeypatch.setattr(problems.st, "markdown", lambda _message: None)
+    monkeypatch.setattr(problems.st, "caption", lambda _message: None)
+
+    class ExpanderContext:
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, *_args: Any) -> None:
+            return None
+
+    expander_calls: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        problems.st,
+        "expander",
+        lambda label, expanded: (
+            expander_calls.append((label, expanded)) or ExpanderContext()
+        ),
+    )
+    monkeypatch.setattr(
+        problems,
+        "_render_io_cases",
+        lambda field_name, cases: rendered_fields.append((field_name, cases)),
+    )
+    samples = [{"input": "1 2", "output": "3"}]
+    testcases = [{"input": "2 3", "output": "5"}]
+
+    problems.render_problem_detail(
+        {
+            "description": "加法",
+            "input_description": "两个整数",
+            "output_description": "和",
+            "samples": samples,
+            "constraints": "整数",
+            "testcases": testcases,
+        }
+    )
+
+    assert rendered_fields == [("samples", samples), ("testcases", testcases)]
+    assert expander_calls == [("测试点", False)]
+
+
+def test_problem_detail_places_submission_panel_on_right(monkeypatch: Any) -> None:
+    rendered: list[str] = []
+    problem = {"id": "P1", "title": "加法"}
+
+    class ColumnContext:
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, *_args: Any) -> None:
+            return None
+
+    monkeypatch.setattr(problems.st, "button", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        problems.st,
+        "columns",
+        lambda *args, **_kwargs: [ColumnContext(), ColumnContext()],
+    )
+    monkeypatch.setattr(problems.st, "divider", lambda: None)
+    monkeypatch.setattr(problems, "load_problem_detail", lambda _problem_id: problem)
+    monkeypatch.setattr(
+        problems,
+        "render_problem_detail",
+        lambda _problem: rendered.append("题目详情"),
+    )
+    monkeypatch.setattr(
+        problems,
+        "render_problem_actions",
+        lambda _problem_id: rendered.append("题目操作"),
+    )
+    monkeypatch.setattr(
+        submit,
+        "render_problem_submission",
+        lambda _problem: rendered.append("代码提交"),
+    )
+
+    problems._render_detail_page("P1")
+
+    assert rendered == ["题目详情", "题目操作", "代码提交"]
 
 
 def test_submit_loaders_follow_problem_and_language_response_shapes(
@@ -715,7 +929,7 @@ def test_submission_log_403_is_reported_without_crashing(monkeypatch: Any) -> No
     monkeypatch.setattr(
         submission_detail,
         "show_api_message",
-        lambda status_code, response: shown.append((status_code, response)),
+        lambda status_code, response, **_kwargs: shown.append((status_code, response)),
     )
 
     assert submission_detail.load_submission_log("s1") is None
@@ -757,13 +971,17 @@ def test_pending_submission_page_does_not_request_log(monkeypatch: Any) -> None:
 
 def test_submission_status_renders_all_documented_states(monkeypatch: Any) -> None:
     rendered: list[tuple[str, str]] = []
-    monkeypatch.setattr(ui.st, "info", lambda message: rendered.append(("info", message)))
+    monkeypatch.setattr(
+        ui.st, "info", lambda message: rendered.append(("info", message))
+    )
     monkeypatch.setattr(
         ui.st,
         "success",
         lambda message: rendered.append(("success", message)),
     )
-    monkeypatch.setattr(ui.st, "error", lambda message: rendered.append(("error", message)))
+    monkeypatch.setattr(
+        ui.st, "error", lambda message: rendered.append(("error", message))
+    )
 
     ui.render_submission_status("pending")
     ui.render_submission_status("success")
@@ -786,6 +1004,7 @@ def test_navigation_merges_problem_editor_and_profile_logout(monkeypatch: Any) -
     monkeypatch.setattr(frontend_app.st, "session_state", {})
     monkeypatch.setattr(frontend_app.st, "sidebar", sidebar)
     monkeypatch.setattr(frontend_app.st, "header", lambda _message: None)
+    monkeypatch.setattr(frontend_app.st, "caption", lambda _message: None)
     monkeypatch.setattr(frontend_app.st, "info", lambda _message: None)
     monkeypatch.setattr(
         frontend_app,
@@ -801,7 +1020,7 @@ def test_navigation_merges_problem_editor_and_profile_logout(monkeypatch: Any) -
         "题目",
         "评测结果",
     ]
-    assert "新增 / 编辑题目" not in sidebar.options
+    assert "新增/修改题目" not in sidebar.options
     assert "提交代码" not in sidebar.options
     assert "退出登录" not in sidebar.options
 
@@ -811,6 +1030,7 @@ def test_navigation_keeps_user_management_admin_only(monkeypatch: Any) -> None:
     monkeypatch.setattr(frontend_app.st, "session_state", {})
     monkeypatch.setattr(frontend_app.st, "sidebar", sidebar)
     monkeypatch.setattr(frontend_app.st, "header", lambda _message: None)
+    monkeypatch.setattr(frontend_app.st, "caption", lambda _message: None)
     monkeypatch.setattr(frontend_app.st, "info", lambda _message: None)
     monkeypatch.setattr(
         frontend_app,
@@ -823,7 +1043,7 @@ def test_navigation_keeps_user_management_admin_only(monkeypatch: Any) -> None:
     frontend_app.build_navigation()
 
     assert "用户管理" in sidebar.options
-    assert "新增 / 编辑题目" not in sidebar.options
+    assert "新增/修改题目" not in sidebar.options
     assert "提交代码" not in sidebar.options
     assert "退出登录" not in sidebar.options
 
@@ -834,6 +1054,7 @@ def test_navigation_renders_login_form_for_guests(monkeypatch: Any) -> None:
     monkeypatch.setattr(frontend_app.st, "session_state", {})
     monkeypatch.setattr(frontend_app.st, "sidebar", sidebar)
     monkeypatch.setattr(frontend_app.st, "header", lambda _message: None)
+    monkeypatch.setattr(frontend_app.st, "caption", lambda _message: None)
     monkeypatch.setattr(frontend_app.st, "info", lambda _message: None)
     monkeypatch.setattr(frontend_app, "get_current_user", lambda: None)
     monkeypatch.setattr(
@@ -858,6 +1079,7 @@ def test_navigation_opens_submission_records(monkeypatch: Any) -> None:
     )
     monkeypatch.setattr(frontend_app.st, "sidebar", sidebar)
     monkeypatch.setattr(frontend_app.st, "header", lambda _message: None)
+    monkeypatch.setattr(frontend_app.st, "caption", lambda _message: None)
     monkeypatch.setattr(
         frontend_app,
         "get_current_user",
@@ -883,24 +1105,75 @@ def test_submission_selector_offers_result_and_log_actions(monkeypatch: Any) -> 
             labels.append(label)
             return False
 
-    monkeypatch.setattr(submissions.st, "selectbox", lambda *_args, **_kwargs: "s1")
+    monkeypatch.setattr(submissions.st, "caption", lambda _message: None)
     monkeypatch.setattr(
         submissions.st,
         "columns",
         lambda _count: [ActionColumn(), ActionColumn()],
     )
 
-    submissions.render_submission_selector([{"submission_id": "s1"}])
+    submissions.render_submission_selector("s1")
 
-    assert labels == ["查询评测结果", "查询评测日志"]
+    assert labels == ["查询选中评测结果", "查询选中评测日志"]
+
+
+def test_submission_table_uses_single_row_selection(monkeypatch: Any) -> None:
+    dataframe_kwargs: dict[str, Any] = {}
+    rendered_rows: list[dict[str, Any]] = []
+
+    def fake_dataframe(rows: Any, **kwargs: Any) -> dict[str, Any]:
+        rendered_rows.extend(rows)
+        dataframe_kwargs.update(kwargs)
+        return {"selection": {"rows": [0]}}
+
+    monkeypatch.setattr(submissions.st, "dataframe", fake_dataframe)
+
+    selected = submissions.render_submission_table(
+        [
+            {
+                "submission_id": "s1",
+                "status": "success",
+                "score": 100,
+                "counts": 10,
+            },
+            {
+                "submission_id": "s2",
+                "status": "pending",
+                "score": None,
+                "counts": None,
+            },
+        ]
+    )
+
+    assert selected == "s1"
+    assert dataframe_kwargs["selection_mode"] == "single-row"
+    assert [row["得分"] for row in rendered_rows] == [100, None]
+    assert [row["测试点数"] for row in rendered_rows] == [10, None]
 
 
 def test_streamlit_builtin_page_navigation_is_disabled() -> None:
-    config = (PROJECT_ROOT / ".streamlit" / "config.toml").read_text(
-        encoding="utf-8"
-    )
+    config = (PROJECT_ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8")
 
     assert "showSidebarNavigation = false" in config
+
+
+def test_readme_limits_uvicorn_reload_to_backend_source() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "uvicorn app.main:app --reload --reload-dir app" in readme
+
+
+def test_frontend_uses_chinese_navigation_and_preserves_api_fields() -> None:
+    app_source = (PROJECT_ROOT / "frontend" / "app.py").read_text(encoding="utf-8")
+    submissions_source = (
+        PROJECT_ROOT / "frontend" / "pages" / "submissions.py"
+    ).read_text(encoding="utf-8")
+
+    assert all(label in app_source for label in ("题目", "评测结果", "我的信息"))
+    assert all(
+        field in submissions_source
+        for field in ("user_id", "problem_id", "status", "page", "page_size")
+    )
 
 
 def test_frontend_modules_import_from_streamlit_script_directory() -> None:

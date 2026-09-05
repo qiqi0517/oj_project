@@ -4,102 +4,130 @@ from typing import Any
 import streamlit as st
 
 if __package__ == "frontend.pages":
-    from ..api_client import list_users, update_user_role
+    from ..api_client import get_user, list_users, update_user_role
     from ..session import get_current_user, set_current_user
-    from ..ui import render_user_summary, require_admin, show_api_message
+    from ..ui import (
+        format_role,
+        get_selected_row_index,
+        render_user_summary,
+        require_admin,
+        show_api_message,
+    )
 else:
-    from api_client import list_users, update_user_role
+    from api_client import get_user, list_users, update_user_role
     from session import get_current_user, set_current_user
-    from ui import render_user_summary, require_admin, show_api_message
+    from ui import (
+        format_role,
+        get_selected_row_index,
+        render_user_summary,
+        require_admin,
+        show_api_message,
+    )
 
 
 _PAGE_KEY = "users_page"
 _PAGE_SIZE_KEY = "users_page_size"
 _SELECTED_USER_KEY = "selected_user"
-_ROLE_NAMES = {"user": "普通用户", "admin": "管理员", "banned": "已禁用"}
 
 
 def load_users(
     page: int | None,
     page_size: int | None,
 ) -> tuple[int, list[dict[str, Any]]]:
-    """加载用户列表并返回 total 和 users。"""
+    """Load total and users through GET /api/users/."""
     status_code, body = list_users(page=page, page_size=page_size)
-    if status_code != 200 or body is None or body.get("code") != 200:
-        show_api_message(status_code, body)
+    if not show_api_message(status_code, body, show_success=False):
         return 0, []
 
-    data = body.get("data")
+    data = body.get("data")  # type: ignore
     if not isinstance(data, dict):
-        st.error("后端用户列表响应格式异常。")
+        st.error("API 响应格式无效：data 应为对象。")
         return 0, []
 
     total = data.get("total")
     users = data.get("users")
     if not isinstance(total, int) or not isinstance(users, list):
-        st.error("后端用户列表响应缺少有效的 total 或 users 字段。")
+        st.error("API 响应格式无效：total 应为 int，users 应为列表。")
         return 0, []
 
     valid_users = [user for user in users if isinstance(user, dict)]
     return total, valid_users
 
 
-def render_user_table(users: list[dict[str, Any]]) -> None:
-    """展示用户列表。"""
+def render_user_table(users: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Render user-list fields exactly as named by the API."""
     if not users:
-        st.info("当前没有可显示的用户。")
-        return
+        st.info("暂无用户数据。")
+        return None
 
     rows = [
         {
-            "user_id": user.get("user_id", ""),
-            "username": user.get("username", ""),
-            "role": user.get("role", ""),
-            "join_time": user.get("join_time", ""),
-            "submit_count": user.get("submit_count", 0),
-            "resolve_count": user.get("resolve_count", 0),
+            "用户编号": user.get("user_id", ""),
+            "用户名": user.get("username", ""),
+            "用户身份": format_role(user.get("role")),
+            "注册时间": user.get("join_time", ""),
+            "提交次数": user.get("submit_count", 0),
+            "通过题数": user.get("resolve_count", 0),
         }
         for user in users
     ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    event = st.dataframe(
+        rows,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="user_list_table",
+    )
+    selected_index = get_selected_row_index(event)
+    if selected_index is None or selected_index >= len(users):
+        return None
+    return users[selected_index]
 
 
-def render_role_editor(users: list[dict[str, Any]]) -> None:
-    """选择用户并修改 role。"""
-    if not users:
+def load_user_detail(user_id: str) -> dict[str, Any] | None:
+    """Load a user through GET /api/users/{user_id}."""
+    status_code, body = get_user(user_id)
+    if not show_api_message(status_code, body, show_success=False):
+        return None
+    data = body.get("data")  # type: ignore
+    if not isinstance(data, dict):
+        st.error("API 响应格式无效：data 应包含用户对象。")
+        return None
+    return data
+
+
+def render_role_editor(selected_user: dict[str, Any] | None) -> None:
+    """Select a user and update role through the API."""
+    if selected_user is None:
+        st.info("请先从用户列表中选择并查看一名用户。")
         return
 
-    user_by_label = {
-        f"{user.get('username', '未知用户')}（{user.get('user_id', '')}）": user
-        for user in users
-    }
-    selected_label = st.selectbox(
-        "user_id",
-        list(user_by_label),
-        key="role_editor_user_id",
-    )
-    selected_user = user_by_label[selected_label]
     current_role = str(selected_user.get("role", "user"))
     roles = ["user", "admin", "banned"]
+    st.caption(
+        f"当前用户：{selected_user.get('username', '未知用户')} · "
+        f"用户编号：{selected_user.get('user_id', '未提供')}"
+    )
 
     with st.form("role_editor"):
         role = st.selectbox(
-            "role",
+            "用户角色",
             roles,
             index=roles.index(current_role) if current_role in roles else 0,
-            format_func=lambda value: f"{value} · {_ROLE_NAMES[value]}",
+            format_func=format_role,
         )
-        submitted = st.form_submit_button("更新角色", type="primary")
+        submitted = st.form_submit_button("更新 role", type="primary")
 
     if not submitted:
         return
 
     user_id = selected_user.get("user_id")
     if not isinstance(user_id, str) or not user_id:
-        st.error("所选用户缺少有效的 user_id。")
+        st.error("选中的用户没有有效的 user_id。")
         return
     if role == current_role:
-        st.info("用户角色没有变化。")
+        st.info("role 未发生变化。")
         return
 
     status_code, body = update_user_role(user_id, role)
@@ -115,12 +143,12 @@ def render_role_editor(users: list[dict[str, Any]]) -> None:
 
 
 def render_pagination(total: int) -> tuple[int | None, int | None]:
-    """管理员用户列表分页控件。"""
+    """Render the page and page_size query controls."""
     if _PAGE_SIZE_KEY not in st.session_state:
         st.session_state[_PAGE_SIZE_KEY] = 10
     page_size = int(
         st.selectbox(
-            "page_size",
+            "每页数量",
             [5, 10, 20, 50],
             key=_PAGE_SIZE_KEY,
         )
@@ -131,39 +159,44 @@ def render_pagination(total: int) -> tuple[int | None, int | None]:
     st.session_state[_PAGE_KEY] = min(max(1, current_page), max_page)
     page = int(
         st.selectbox(
-            "page",
+            "页码",
             list(range(1, max_page + 1)),
             index=st.session_state[_PAGE_KEY] - 1,
             key=_PAGE_KEY,
         )
     )
-    st.caption(f"共 {total} 位用户，第 {page} / {max_page} 页")
+    st.caption(f"总数：{total} · 第 {page}/{max_page} 页")
     return page, page_size
 
 
-def render_user_selector(users: list[dict[str, Any]]) -> None:
-    """选择列表条目并查看用户字段。"""
-    if not users:
-        return
-    user_by_label = {
-        f"{user.get('username', 'unknown')} · {user.get('user_id', '')}": user
-        for user in users
-    }
-    selected_label = st.selectbox(
-        "user_id",
-        list(user_by_label),
-        key="user_detail_selector",
-    )
-    if st.button("查询用户信息", use_container_width=True):
-        st.session_state[_SELECTED_USER_KEY] = user_by_label[selected_label]
+def render_user_selector(
+    selected_user: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Select a list item and display its public fields."""
+    st.caption("请在列表左侧选中一条用户记录。")
+    if st.button(
+        "查看选中用户",
+        type="primary",
+        use_container_width=True,
+        disabled=selected_user is None,
+    ):
+        selected_user_id = selected_user.get("user_id") if selected_user else None
+        if not isinstance(selected_user_id, str) or not selected_user_id:
+            st.error("选中的用户没有有效的 user_id。")
+        else:
+            loaded_user = load_user_detail(selected_user_id)
+            if loaded_user is not None:
+                st.session_state[_SELECTED_USER_KEY] = loaded_user
 
-    selected_user = st.session_state.get(_SELECTED_USER_KEY)
-    if isinstance(selected_user, dict):
-        render_user_summary(selected_user)
+    detailed_user = st.session_state.get(_SELECTED_USER_KEY)
+    if isinstance(detailed_user, dict):
+        render_user_summary(detailed_user)
+        return detailed_user
+    return None
 
 
 def render_page() -> None:
-    """用户管理页面入口。"""
+    """Render the admin user-management page."""
     if not require_admin():
         return
 
@@ -174,8 +207,8 @@ def render_page() -> None:
     if page != requested_page or page_size != requested_page_size:
         st.rerun()
 
-    render_user_table(users)
-    render_user_selector(users)
+    selected_user = render_user_table(users)
+    detailed_user = render_user_selector(selected_user)
     st.divider()
-    st.subheader("修改用户角色")
-    render_role_editor(users)
+    st.subheader("更新 role")
+    render_role_editor(detailed_user)

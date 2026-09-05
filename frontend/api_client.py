@@ -12,7 +12,8 @@ else:
 ApiResponse = dict[str, Any]
 
 
-# 通用请求
+# Shared request handling
+
 
 def request_api(
     method: str,
@@ -22,9 +23,10 @@ def request_api(
     json: dict[str, Any] | None = None,
 ) -> tuple[int | None, ApiResponse | None]:
     """
-    返回：
-    - HTTP 状态码；网络连接失败时为 None
-    - 后端 JSON；无法获得合法 JSON 时为 None
+    Return the HTTP status and decoded API object.
+
+    A missing status means the request could not reach the backend. A missing
+    body with a status means the backend returned a non-JSON response.
     """
     url = f"{API_BASE_URL}/{path.lstrip('/')}"
 
@@ -39,6 +41,9 @@ def request_api(
     except requests.RequestException:
         return None, None
 
+    if response.status_code == 401:
+        clear_current_user()
+
     try:
         body = response.json()
     except (requests.JSONDecodeError, ValueError):
@@ -47,15 +52,14 @@ def request_api(
     if not isinstance(body, dict):
         return response.status_code, None
 
-    if response.status_code == 401 or (
-        response.status_code == 403 and body.get("msg") == "user is banned"
-    ):
+    if response.status_code == 403 and body.get("msg") == "user is banned":
         clear_current_user()
 
     return response.status_code, body
 
 
-# 用户接口
+# User API
+
 
 def login(
     username: str,
@@ -119,7 +123,8 @@ def update_user_role(
     )
 
 
-# 题目接口
+# Problem API
+
 
 def list_problems() -> tuple[int | None, ApiResponse | None]:
     """GET /api/problems/"""
@@ -159,14 +164,16 @@ def delete_problem(
     return request_api("DELETE", f"/api/problems/{problem_id}")
 
 
-# 语言接口
+# Language API
+
 
 def list_languages() -> tuple[int | None, ApiResponse | None]:
     """GET /api/languages/"""
     return request_api("GET", "/api/languages/")
 
 
-# 提交与评测接口
+# Submission and judging API
+
 
 def create_submission(
     problem_id: str,
@@ -221,11 +228,12 @@ def get_submission_log(
     """GET /api/submissions/{submission_id}/log"""
     return request_api("GET", f"/api/submissions/{submission_id}/log")
 
+
 def rejudge_submission(
     submission_id: str,
 ) -> tuple[int | None, ApiResponse | None]:
     """PUT /api/submissions/{submission_id}/rejudge"""
-    ...
+    return request_api("PUT", f"/api/submissions/{submission_id}/rejudge")
 
 
 def update_log_visibility(
@@ -233,7 +241,11 @@ def update_log_visibility(
     public_cases: bool,
 ) -> tuple[int | None, ApiResponse | None]:
     """PUT /api/problems/{problem_id}/log_visibility"""
-    ...
+    return request_api(
+        "PUT",
+        f"/api/problems/{problem_id}/log_visibility",
+        json={"public_cases": public_cases},
+    )
 
 
 def list_log_access(
@@ -244,4 +256,14 @@ def list_log_access(
     page_size: int | None = None,
 ) -> tuple[int | None, ApiResponse | None]:
     """GET /api/logs/access/"""
-    ...
+    params = {
+        key: value
+        for key, value in {
+            "user_id": user_id,
+            "problem_id": problem_id,
+            "page": page,
+            "page_size": page_size,
+        }.items()
+        if value is not None
+    }
+    return request_api("GET", "/api/logs/access/", params=params or None)

@@ -11,7 +11,12 @@ if __package__ == "frontend.pages":
         is_admin,
         set_selected_submission,
     )
-    from ..ui import require_login, show_api_message
+    from ..ui import (
+        format_submission_status,
+        get_selected_row_index,
+        require_login,
+        show_api_message,
+    )
 else:
     from api_client import list_problems, list_submissions, list_users
     from session import (
@@ -20,7 +25,12 @@ else:
         is_admin,
         set_selected_submission,
     )
-    from ui import require_login, show_api_message
+    from ui import (
+        format_submission_status,
+        get_selected_row_index,
+        require_login,
+        show_api_message,
+    )
 
 
 _FILTERS_KEY = "submission_filters"
@@ -32,12 +42,11 @@ _DETAIL_MODE_KEY = "submission_detail_mode"
 
 def _load_problem_choices() -> list[dict[str, Any]]:
     status_code, body = list_problems()
-    if status_code != 200 or body is None or body.get("code") != 200:
-        show_api_message(status_code, body)
+    if not show_api_message(status_code, body, show_success=False):
         return []
-    data = body.get("data")
+    data = body.get("data")  # type: ignore
     if not isinstance(data, list):
-        st.error("后端题目列表响应格式异常。")
+        st.error("API 响应格式无效：data 应为题目列表。")
         return []
     return [problem for problem in data if isinstance(problem, dict)]
 
@@ -48,12 +57,11 @@ def _load_user_choices() -> list[dict[str, Any]]:
         return [current_user] if isinstance(current_user, dict) else []
 
     status_code, body = list_users()
-    if status_code != 200 or body is None or body.get("code") != 200:
-        show_api_message(status_code, body)
+    if not show_api_message(status_code, body, show_success=False):
         return []
-    data = body.get("data")
+    data = body.get("data")  # type: ignore
     if not isinstance(data, dict) or not isinstance(data.get("users"), list):
-        st.error("后端用户列表响应格式异常。")
+        st.error("API 响应格式无效：data.users 应为列表。")
         return []
     return [user for user in data["users"] if isinstance(user, dict)]
 
@@ -64,7 +72,7 @@ def _choice_index(values: list[str | None], current: Any) -> int:
 
 def render_filters() -> dict[str, Any]:
     """
-    返回查询条件：
+    Return the API query parameters:
     user_id / problem_id / status / page / page_size
     """
     current_user = get_current_user() or {}
@@ -83,7 +91,7 @@ def render_filters() -> dict[str, Any]:
     users = _load_user_choices()
     problems = _load_problem_choices()
     user_labels: dict[str, str | None] = {
-        f"{user.get('username', 'unknown')} · {user.get('user_id', '')}": str(
+        f"{user.get('username', '未知用户')} · {user.get('user_id', '')}": str(
             user.get("user_id", "")
         )
         for user in users
@@ -101,7 +109,12 @@ def render_filters() -> dict[str, Any]:
             if isinstance(problem.get("id"), str) and problem.get("id")
         },
     }
-    status_labels = {"不限": None, "pending": "pending", "success": "success", "error": "error"}
+    status_labels = {
+        "不限": None,
+        "等待评测": "pending",
+        "评测完成": "success",
+        "评测失败": "error",
+    }
 
     user_values = list(user_labels.values())
     problem_values = list(problem_labels.values())
@@ -112,18 +125,18 @@ def render_filters() -> dict[str, Any]:
 
     with st.form("submission_filters_form"):
         selected_user_label = st.selectbox(
-            "user_id",
+            "用户",
             list(user_labels),
             index=_choice_index(user_values, defaults.get("user_id")),
             disabled=not is_admin(),
         )
         selected_problem_label = st.selectbox(
-            "problem_id",
+            "题目",
             list(problem_labels),
             index=_choice_index(problem_values, defaults.get("problem_id")),
         )
         selected_status_label = st.selectbox(
-            "status",
+            "评测状态",
             list(status_labels),
             index=_choice_index(status_values, defaults.get("status")),
         )
@@ -131,7 +144,7 @@ def render_filters() -> dict[str, Any]:
         page_options = list(range(1, previous_max_page + 1))
         page = int(
             page_column.selectbox(
-                "page",
+                "页码",
                 page_options,
                 index=min(max(int(defaults.get("page") or 1), 1), previous_max_page)
                 - 1,
@@ -141,7 +154,7 @@ def render_filters() -> dict[str, Any]:
         default_page_size = int(defaults.get("page_size") or 10)
         page_size = int(
             size_column.selectbox(
-                "page_size",
+                "每页数量",
                 page_sizes,
                 index=(
                     page_sizes.index(default_page_size)
@@ -178,7 +191,7 @@ def load_submissions(
     page: int | None = None,
     page_size: int | None = None,
 ) -> tuple[int, list[dict[str, Any]]]:
-    """加载评测列表并返回 total 和 submissions。"""
+    """Load total and submissions through GET /api/submissions/."""
     status_code, body = list_submissions(
         user_id=user_id,
         problem_id=problem_id,
@@ -186,40 +199,49 @@ def load_submissions(
         page=page,
         page_size=page_size,
     )
-    if status_code != 200 or body is None or body.get("code") != 200:
-        show_api_message(status_code, body)
+    if not show_api_message(status_code, body, show_success=False):
         return 0, []
-    data = body.get("data")
+    data = body.get("data")  # type: ignore
     if not isinstance(data, dict):
-        st.error("后端评测列表响应格式异常。")
+        st.error("API 响应格式无效：data 应为对象。")
         return 0, []
     total = data.get("total")
     rows = data.get("submissions")
     if not isinstance(total, int) or not isinstance(rows, list):
-        st.error("后端评测列表响应缺少有效的 total 或 submissions 字段。")
+        st.error("API 响应格式无效：total 应为 int，submissions 应为列表。")
         return 0, []
     return total, [row for row in rows if isinstance(row, dict)]
 
 
-def render_submission_table(submissions: list[dict[str, Any]]) -> None:
-    """展示评测列表。"""
+def render_submission_table(submissions: list[dict[str, Any]]) -> str | None:
+    """Render submission-list fields exactly as named by the API."""
     if not submissions:
-        st.info("没有符合筛选条件的评测结果。")
-        return
+        st.info("没有符合筛选条件的评测记录。")
+        return None
     rows = [
         {
-            "submission_id": submission.get("submission_id", ""),
-            "status": submission.get("status", ""),
-            "score": submission.get("score")
-            if submission.get("score") is not None
-            else "—",
-            "counts": submission.get("counts")
-            if submission.get("counts") is not None
-            else "—",
+            "评测编号": submission.get("submission_id", ""),
+            "评测状态": format_submission_status(submission.get("status")),
+            # Keep nullable numeric columns numeric. A string placeholder such as
+            # "—" mixed with integers makes Streamlit/PyArrow conversion fail.
+            "得分": submission.get("score"),
+            "测试点数": submission.get("counts"),
         }
         for submission in submissions
     ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    event = st.dataframe(
+        rows,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="submission_list_table",
+    )
+    selected_index = get_selected_row_index(event)
+    if selected_index is None or selected_index >= len(submissions):
+        return None
+    submission_id = submissions[selected_index].get("submission_id")
+    return submission_id if isinstance(submission_id, str) and submission_id else None
 
 
 def _open_submission(submission_id: str, mode: str) -> None:
@@ -230,26 +252,27 @@ def _open_submission(submission_id: str, mode: str) -> None:
     st.rerun()
 
 
-def render_submission_selector(submissions: list[dict[str, Any]]) -> None:
-    """选择 submission 后进入评测结果或评测日志。"""
-    valid_ids = [
-        submission.get("submission_id")
-        for submission in submissions
-        if isinstance(submission.get("submission_id"), str)
-        and submission.get("submission_id")
-    ]
-    if not valid_ids:
-        return
-    selected_submission_id = st.selectbox("submission_id", valid_ids)
+def render_submission_selector(submission_id: str | None) -> None:
+    """Open either the result or judge log for a selected submission."""
+    st.caption("请在列表左侧选中一条评测记录。")
     result_column, log_column = st.columns(2)
-    if result_column.button("查询评测结果", type="primary", use_container_width=True):
-        _open_submission(selected_submission_id, "result")
-    if log_column.button("查询评测日志", use_container_width=True):
-        _open_submission(selected_submission_id, "log")
+    if result_column.button(
+        "查询选中评测结果",
+        type="primary",
+        use_container_width=True,
+        disabled=submission_id is None,
+    ):
+        _open_submission(str(submission_id), "result")
+    if log_column.button(
+        "查询选中评测日志",
+        use_container_width=True,
+        disabled=submission_id is None,
+    ):
+        _open_submission(str(submission_id), "log")
 
 
 def render_page() -> None:
-    """评测结果页面入口。"""
+    """Render the submissions module."""
     if not require_login():
         return
 
@@ -267,7 +290,7 @@ def render_page() -> None:
     st.subheader("评测列表")
     filters = render_filters()
     if filters.get("user_id") is None and filters.get("problem_id") is None:
-        st.error("user_id 和 problem_id 不能同时为空。")
+        st.error("user_id 与 problem_id 至少需要提供一个。")
         return
 
     total, rows = load_submissions(**filters)
@@ -279,6 +302,6 @@ def render_page() -> None:
         filters["page"] = max_page
         st.session_state[_FILTERS_KEY] = filters
         st.rerun()
-    st.caption(f"total: {total} · page: {current_page}/{max_page}")
-    render_submission_table(rows)
-    render_submission_selector(rows)
+    st.caption(f"总数：{total} · 第 {current_page}/{max_page} 页")
+    selected_submission_id = render_submission_table(rows)
+    render_submission_selector(selected_submission_id)

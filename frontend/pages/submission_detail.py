@@ -30,30 +30,28 @@ _NOTICE_KEY = "submission_notice"
 
 
 def load_submission_detail(submission_id: str) -> dict[str, Any] | None:
-    """获取 submission 总体评测结果。"""
+    """Load a result through GET /api/submissions/{submission_id}."""
     status_code, body = get_submission(submission_id)
-    if status_code != 200 or body is None or body.get("code") != 200:
-        show_api_message(status_code, body)
+    if not show_api_message(status_code, body, show_success=False):
         return None
-    data = body.get("data")
+    data = body.get("data")  # type: ignore
     if not isinstance(data, dict):
-        st.error("后端提交详情响应格式异常。")
+        st.error("API 响应格式无效：data 应为评测对象。")
         return None
     if data.get("status") not in {"pending", "success", "error"}:
-        st.error("后端提交详情缺少有效的评测状态。")
+        st.error("API 响应格式无效：status 必须为 pending、success 或 error。")
         return None
     return data
 
 
 def load_submission_log(submission_id: str) -> dict[str, Any] | None:
-    """获取当前用户有权限查看的评测日志。"""
+    """Load a judge log through GET /api/submissions/{submission_id}/log."""
     status_code, body = get_submission_log(submission_id)
-    if status_code != 200 or body is None or body.get("code") != 200:
-        show_api_message(status_code, body)
+    if not show_api_message(status_code, body, show_success=False):
         return None
-    data = body.get("data")
+    data = body.get("data")  # type: ignore
     if not isinstance(data, dict):
-        st.error("后端评测日志响应格式异常。")
+        st.error("API 响应格式无效：data 应为评测日志对象。")
         return None
     details = data.get("details")
     score = data.get("score")
@@ -63,7 +61,7 @@ def load_submission_log(submission_id: str) -> dict[str, Any] | None:
         or not isinstance(score, int)
         or not isinstance(counts, int)
     ):
-        st.error("后端评测日志缺少有效的 details、score 或 counts 字段。")
+        st.error("API 响应格式无效：details、score 或 counts 的类型不正确。")
         return None
     return data
 
@@ -73,16 +71,16 @@ def _render_phase_info(title: str, info: Any, empty_message: str) -> None:
     if not isinstance(info, dict):
         st.info(empty_message)
         return
-    st.write(f"result: {info.get('result', '未知')}")
+    st.write(f"结果：{info.get('result', '未知')}")
     message = info.get("message")
     if message:
         st.code(str(message), language=None)
     else:
-        st.caption("没有附加信息。")
+        st.caption("暂无附加 message。")
 
 
 def render_submission_detail(submission: dict[str, Any]) -> None:
-    """展示总体状态、分数、编译信息、运行信息和错误信息。"""
+    """Render the submission result fields defined by the API."""
     submission_id = submission.get("submission_id", "未知")
     st.subheader(f"评测结果 · {submission_id}")
     status = str(submission.get("status", ""))
@@ -91,34 +89,32 @@ def render_submission_detail(submission: dict[str, Any]) -> None:
     score_column, counts_column = st.columns(2)
     score = submission.get("score")
     counts = submission.get("counts")
-    score_column.metric("score", score if score is not None else "等待评测")
-    counts_column.metric("counts", counts if counts is not None else "等待评测")
+    score_column.metric("得分", score if score is not None else "等待评测")
+    counts_column.metric("测试点数", counts if counts is not None else "等待评测")
 
     _render_phase_info(
-        "compile_info",
+        "编译信息",
         submission.get("compile_info"),
-        "当前尚无编译信息；解释型语言通常不需要编译。",
+        "暂无编译信息（解释型编程语言没有编译阶段）",
     )
     _render_phase_info(
-        "run_info",
+        "运行信息",
         submission.get("run_info"),
-        "当前尚无运行信息。",
+        "暂无运行信息",
     )
-
-    st.markdown("### error_info")
-    error_info = submission.get("error_info")
-    if error_info:
-        st.error(str(error_info))
-    else:
-        st.caption("无任务级错误。")
+    _render_phase_info(
+        "错误信息",
+        submission.get("error_info"),
+        "暂无测评级错误信息",
+    )
 
 
 def render_submission_log(log_data: dict[str, Any]) -> None:
-    """展示测试点 details、score 和 counts。"""
-    st.markdown("### details")
+    """Render the details, score, and counts judge-log fields."""
+    st.markdown("### 测试点明细")
     score_column, counts_column = st.columns(2)
-    score_column.metric("score", log_data.get("score", 0))
-    counts_column.metric("counts", log_data.get("counts", 0))
+    score_column.metric("得分", log_data.get("score", 0))
+    counts_column.metric("测试点数", log_data.get("counts", 0))
     details = log_data.get("details", [])
     render_testcase_details(
         [detail for detail in details if isinstance(detail, dict)]
@@ -128,9 +124,9 @@ def render_submission_log(log_data: dict[str, Any]) -> None:
 
 
 def render_pending_state(submission_id: str) -> None:
-    """评测仍为 pending 时展示状态和重新查询入口。"""
-    st.info(f"提交 {submission_id} 正在排队或评测中。")
-    if st.button("重新查询评测状态", type="primary"):
+    """Render a refresh action while status is pending."""
+    st.info(f"评测 {submission_id} 正在排队或执行中。")
+    if st.button("刷新评测结果", type="primary"):
         st.rerun()
 
 
@@ -149,7 +145,7 @@ def _render_back_button() -> None:
 
 
 def render_page() -> None:
-    """提交详情页面入口。"""
+    """Render either a submission result or its judge log."""
     if not require_login():
         return
 
@@ -160,7 +156,7 @@ def render_page() -> None:
 
     submission_id = get_selected_submission()
     if not submission_id:
-        st.error("没有选择要查看的评测。")
+        st.error("请先选择评测，再查询评测结果或评测日志。")
         return
 
     mode = st.session_state.get(_DETAIL_MODE_KEY, "result")

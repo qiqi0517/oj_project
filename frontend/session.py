@@ -24,7 +24,7 @@ _PAGE_STATE_KEYS = (
 
 
 def init_session_state() -> None:
-    """初始化本次 Streamlit 会话需要的状态。"""
+    """Initialize state owned by the current Streamlit session."""
     if _API_SESSION_KEY not in st.session_state:
         st.session_state[_API_SESSION_KEY] = requests.Session()
     if _CURRENT_USER_KEY not in st.session_state:
@@ -36,25 +36,25 @@ def init_session_state() -> None:
 
 
 def get_api_session() -> requests.Session:
-    """获取当前 Streamlit 用户独立使用的 requests.Session。"""
+    """Return the requests.Session dedicated to the current frontend user."""
     init_session_state()
     return st.session_state[_API_SESSION_KEY]
 
 
 def get_current_user() -> dict[str, Any] | None:
-    """获取当前前端保存的用户信息。"""
+    """Return the current user cached by the frontend."""
     init_session_state()
     return st.session_state[_CURRENT_USER_KEY]
 
 
 def set_current_user(user: dict[str, Any]) -> None:
-    """登录成功后保存当前用户信息。"""
+    """Cache the authenticated user returned by the login API."""
     init_session_state()
     st.session_state[_CURRENT_USER_KEY] = user.copy()
 
 
 def clear_current_user() -> None:
-    """退出登录后清空当前用户信息。"""
+    """Clear identity, page state, selections, and API cookies."""
     init_session_state()
     st.session_state[_CURRENT_USER_KEY] = None
     st.session_state[_SELECTED_PROBLEM_KEY] = None
@@ -65,35 +65,35 @@ def clear_current_user() -> None:
 
 
 def is_logged_in() -> bool:
-    """当前前端是否记录了登录用户。"""
+    """Return whether the frontend currently has an authenticated user."""
     return get_current_user() is not None
 
 
 def is_admin() -> bool:
-    """当前用户是否为管理员。"""
+    """Return whether the current user's role is admin."""
     user = get_current_user()
     return user is not None and user.get("role") == "admin"
 
 
 def set_selected_problem(problem_id: str | None) -> None:
-    """保存当前正在查看的题目编号。"""
+    """Store the selected problem_id."""
     init_session_state()
     st.session_state[_SELECTED_PROBLEM_KEY] = problem_id
 
 
 def get_selected_problem() -> str | None:
-    """获取当前正在查看的题目编号。"""
+    """Return the selected problem_id."""
     init_session_state()
     return st.session_state[_SELECTED_PROBLEM_KEY]
 
 
 def set_selected_submission(submission_id: str | None) -> None:
-    """保存当前正在查看的 submission id。"""
+    """Store the selected submission_id."""
     init_session_state()
     st.session_state[_SELECTED_SUBMISSION_KEY] = submission_id
 
 
 def get_selected_submission() -> str | None:
-    """获取当前正在查看的 submission id。"""
+    """Return the selected submission_id."""
     init_session_state()
     return st.session_state[_SELECTED_SUBMISSION_KEY]
